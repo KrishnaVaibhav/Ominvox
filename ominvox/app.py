@@ -97,6 +97,10 @@ def spike(cfg: dict, window_s: float = 5.0, translate: bool = False,
     t_start = time.perf_counter()
     try:
         for chunk in cap.chunks():
+            if chunk is None:               # source silent / paused
+                if max_seconds and (time.perf_counter() - t_start) >= max_seconds:
+                    break
+                continue
             buf.append(chunk); buf_n += len(chunk)
             if buf_n < need:
                 if max_seconds and (time.perf_counter() - t_start) >= max_seconds:
@@ -160,7 +164,11 @@ def audio_test(cfg: dict, seconds: float = 10.0) -> int:
     from .capture import LoopbackCapture
 
     cap = LoopbackCapture.from_cfg(cfg)
-    cap.start()
+    try:
+        cap.start()
+    except RuntimeError as e:
+        print(f"FAIL: {e}")
+        return 1
     print(f"Listening for {seconds:.0f}s  >>> PLAY YOUR MOVIE / SOME AUDIO NOW <<<\n")
     peak = 0.0
     n = 0
@@ -169,7 +177,9 @@ def audio_test(cfg: dict, seconds: float = 10.0) -> int:
         if cap.error:
             print(f"FAIL: capture error -> {cap.error}")
             break
-        if len(chunk):
+        if chunk is None:
+            print("  level 0.0000 |   (no audio arriving - is something playing?)")
+        elif len(chunk):
             rms = float(np.sqrt(np.mean(chunk ** 2)))
             peak = max(peak, rms)
             n += 1
@@ -181,9 +191,9 @@ def audio_test(cfg: dict, seconds: float = 10.0) -> int:
     print(f"\nDevice : {cap.device_name}")
     print(f"Peak level over {n} chunks: {peak:.4f}")
     if peak > 1e-3:
-        print("RESULT: AUDIO DETECTED ✓  — capture is working.")
+        print("RESULT: AUDIO DETECTED - capture is working.")
         return 0
-    print("RESULT: SILENCE ✗  — no system audio captured.")
+    print("RESULT: SILENCE - no system audio captured.")
     print("  Fix: run `run.bat --list-devices`, find the loopback whose name matches")
     print("  the device your movie plays on, and set audio.input_device_index in config.yaml.")
     return 1

@@ -430,9 +430,10 @@ input[type=range] {
 .speakers-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
 }
+.speakers-header .speakers-hint { flex: 1; }
 .speakers-title {
   font-size: 11px;
   font-weight: 700;
@@ -581,7 +582,9 @@ input[type=range] {
   <div class="speakers-inner">
     <div class="speakers-header">
       <span class="speakers-title">Speakers</span>
-      <span class="speakers-hint">Click a name to rename</span>
+      <span class="speakers-hint">Rename a speaker to keep their voice across sessions.
+        Give two entries the same name to merge them.</span>
+      <button class="btn-sm" id="forget-all-btn" title="Forget every saved speaker (e.g. new movie)">Forget all</button>
     </div>
     <div id="speakers-list">
       <div class="speakers-empty">No speakers detected yet — start the pipeline to begin.</div>
@@ -633,7 +636,9 @@ input[type=range] {
         <option value="nl">Dutch</option>
         <option value="pl">Polish</option>
         <option value="tr">Turkish</option>
-        <option value="sv">Swedish</option>
+        <option value="cs">Czech</option>
+        <option value="hu">Hungarian</option>
+        <option value="sv">Swedish (text only, no voice)</option>
       </select>
     </div>
 
@@ -693,10 +698,8 @@ let pipelineRunning = false;
 let ws = null;
 let autoScroll = true;
 
-// speaker_id (pyannote label) -> { name, utterances, active }
-const speakerRoster = {};
-// name -> array of speaker_ids that resolve to this name
-const nameToIds = {};
+// display name -> { name, utterances }   (the server identifies speakers by name)
+let speakerRoster = {};
 let activeSpeaker = null;
 
 // ── WebSocket ───────────────────────────────────────────────
@@ -710,7 +713,7 @@ function connect() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'status') handleStatus(msg);
     else if (msg.type === 'utterance') handleUtterance(msg);
-    else if (msg.type === 'speakers') handleSpeakers(msg.speakers);
+    else if (msg.type === 'speakers') handleSpeakers(msg.speakers, msg);
     else if (msg.type === 'level') updateLevel(msg.rms);
     else if (msg.type === 'log') setLog(msg.msg);
   };
@@ -734,7 +737,9 @@ function handleStatus(msg) {
   if (msg.speakers) handleSpeakers(msg.speakers);
 }
 
+let pipelineState = 'stopped';
 function setStatus(state) {
+  pipelineState = state;
   pipelineRunning = (state === 'running');
   const chip = document.getElementById('status-chip');
   const label = document.getElementById('status-label');
@@ -744,12 +749,12 @@ function setStatus(state) {
   label.textContent = state === 'running' ? 'Listening'
                     : state === 'loading'  ? 'Loading models…'
                     : 'Stopped';
-  btn.textContent = pipelineRunning ? 'Stop' : 'Start Listening';
-  btn.className = 'btn-primary' + (pipelineRunning ? ' danger' : '');
+  btn.textContent = pipelineRunning ? 'Stop' : state === 'loading' ? 'Cancel' : 'Start Listening';
+  btn.className = 'btn-primary' + (state !== 'stopped' ? ' danger' : '');
 }
 
 function togglePipeline() {
-  if (pipelineRunning) {
+  if (pipelineState !== 'stopped') {
     send({type:'stop'});
   } else {
     setStatus('loading');
@@ -792,13 +797,8 @@ function appendCard(containerId, emptyId, colorVar, speakerStr, text, langCode) 
 
 function handleUtterance(msg) {
   const colorVar = speakerColor(msg.speaker);
-  // Track roster from utterance events (speaker_id may not be present on older server)
-  const spkId = msg.speaker_id || msg.speaker;
-  if (!speakerRoster[spkId]) {
-    speakerRoster[spkId] = { name: msg.speaker, utterances: 0, active: false };
-  }
-  speakerRoster[spkId].name = msg.speaker;
-  speakerRoster[spkId].utterances++;
+  const spkId = msg.speaker;
+  if (!speakerRoster[spkId]) speakerRoster[spkId] = { name: spkId, utterances: 0 };
 
   // Flash active speaker
   if (activeSpeaker && activeSpeaker !== spkId) {
@@ -808,20 +808,22 @@ function handleUtterance(msg) {
   activeSpeaker = spkId;
   const row = document.querySelector(`[data-speaker-id="${CSS.escape(spkId)}"]`);
   if (row) row.classList.add('active');
+  else renderSpeakers();
 
   appendCard('src-transcript', 'src-empty', colorVar, msg.speaker, msg.src_text, msg.src_lang);
   appendCard('tgt-transcript', 'tgt-empty', colorVar, msg.speaker, msg.translated, msg.tgt_lang);
 }
 
 // ── Speakers panel ──────────────────────────────────────────
-function handleSpeakers(speakers) {
-  // speakers: { name -> { utterances, has_centroid } }
-  // Merge into roster using name as key (server now sends by name)
-  for (const [name, info] of Object.entries(speakers)) {
-    if (!speakerRoster[name]) {
-      speakerRoster[name] = { name, utterances: 0, active: false };
-    }
-    speakerRoster[name].utterances = info.utterances || speakerRoster[name].utterances;
+function handleSpeakers(speakers, extra) {
+  // speakers: { name -> { utterances, has_centroid } } -- the full, current list
+  if (extra && extra.renamed) {
+    const { from, to } = extra.renamed;
+    if (from in speakerMap && !(to in speakerMap)) speakerMap[to] = speakerMap[from];
+  }
+  speakerRoster = {};
+  for (const [name, info] of Object.entries(speakers || {})) {
+    speakerRoster[name] = { name, utterances: info.utterances || 0 };
   }
   renderSpeakers();
 }
@@ -829,73 +831,70 @@ function handleSpeakers(speakers) {
 function renderSpeakers() {
   const list = document.getElementById('speakers-list');
   const names = Object.keys(speakerRoster);
+  list.innerHTML = '';
   if (!names.length) {
     list.innerHTML = '<div class="speakers-empty">No speakers detected yet.</div>';
     return;
   }
-
-  list.innerHTML = '';
-  for (const key of names) {
-    const info = speakerRoster[key];
-    const colorVar = speakerColor(info.name || key);
-    const color = `var(${colorVar})`;
+  for (const name of names) {
+    const info = speakerRoster[name];
+    const color = `var(${speakerColor(name)})`;
     const row = document.createElement('div');
-    row.className = 'speaker-row';
-    row.dataset.speakerId = key;
-
+    row.className = 'speaker-row' + (name === activeSpeaker ? ' active' : '');
+    row.dataset.speakerId = name;
     row.innerHTML = `
       <div class="speaker-pill">
         <div class="speaker-pill-dot" style="background:${color};--dot-color:${color}"></div>
-        <span class="speaker-pill-name">${escHtml(info.name || key)}</span>
+        <span class="speaker-pill-name">${escHtml(name)}</span>
       </div>
       <span class="speaker-meta">${info.utterances} utterance${info.utterances===1?'':'s'}</span>
-      <button class="btn-sm" onclick="startRename('${escAttr(key)}')">Rename</button>
-    `;
+      <button class="btn-sm">Rename</button>`;
+    row.querySelector('button').addEventListener('click', () => startRename(row, name));
     list.appendChild(row);
   }
 }
 
-function startRename(speakerId) {
-  const row = document.querySelector(`[data-speaker-id="${CSS.escape(speakerId)}"]`);
-  if (!row) return;
-  const info = speakerRoster[speakerId] || {};
-  const colorVar = speakerColor(info.name || speakerId);
-  const color = `var(${colorVar})`;
-
+function startRename(row, name) {
+  const color = `var(${speakerColor(name)})`;
   row.innerHTML = `
-    <div class="speaker-pill-dot" style="background:${color}" ></div>
+    <div class="speaker-pill-dot" style="background:${color}"></div>
     <div class="rename-form">
-      <input class="rename-input" id="rename-input-${escAttr(speakerId)}"
-             type="text" value="${escAttr(info.name || speakerId)}"
-             onkeydown="renameKey(event,'${escAttr(speakerId)}')" autofocus>
-      <button class="btn-sm apply" onclick="commitRename('${escAttr(speakerId)}')">Save</button>
-      <button class="btn-sm" onclick="renderSpeakers()">Cancel</button>
-    </div>
-  `;
-  document.getElementById(`rename-input-${speakerId}`)?.focus();
+      <input class="rename-input" type="text" maxlength="60">
+      <button class="btn-sm apply">Save</button>
+      <button class="btn-sm">Cancel</button>
+    </div>`;
+  const input = row.querySelector('input');
+  const [saveBtn, cancelBtn] = row.querySelectorAll('button');
+  input.value = name;
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') commitRename(name, input.value);
+    if (e.key === 'Escape') renderSpeakers();
+  });
+  saveBtn.addEventListener('click', () => commitRename(name, input.value));
+  cancelBtn.addEventListener('click', renderSpeakers);
+  input.focus();
+  input.select();
 }
 
-function renameKey(e, speakerId) {
-  if (e.key === 'Enter') commitRename(speakerId);
-  if (e.key === 'Escape') renderSpeakers();
+function commitRename(oldName, value) {
+  const newName = (value || '').trim();
+  if (!newName || newName === oldName) { renderSpeakers(); return; }
+  send({ type: 'rename_speaker', speaker_id: oldName, name: newName });
+  showToast(newName in speakerRoster ? `Merged into "${newName}"` : `Renamed to "${newName}"`);
 }
 
-function commitRename(speakerId) {
-  const input = document.getElementById(`rename-input-${speakerId}`);
-  const newName = input ? input.value.trim() : '';
-  if (!newName) return;
-
-  // Update local state immediately for snappy UI
-  if (speakerRoster[speakerId]) {
-    const oldName = speakerRoster[speakerId].name;
-    speakerRoster[speakerId].name = newName;
-    // Remap color from old name to new
-    if (oldName in speakerMap) speakerMap[newName] = speakerMap[oldName];
+function forgetAllSpeakers() {
+  if (!Object.keys(speakerRoster).length) return;
+  const btn = document.getElementById('forget-all-btn');
+  if (btn.dataset.armed !== '1') {           // two-step confirm, no blocking dialog
+    btn.dataset.armed = '1';
+    btn.textContent = 'Click again to confirm';
+    setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Forget all'; }, 3000);
+    return;
   }
-
-  send({ type: 'rename_speaker', speaker_id: speakerId, name: newName });
-  renderSpeakers();
-  showToast(`Renamed to "${newName}"`);
+  btn.dataset.armed = '';
+  btn.textContent = 'Forget all';
+  send({ type: 'reset_speakers' });
 }
 
 function toggleSpeakers() {
@@ -940,7 +939,7 @@ function applyConfigFromServer(config) {
 function inputOptionLabel(d) {
   const icon = d.kind === 'mic' ? '🎤 ' : '🔊 ';
   const kindLbl = d.kind === 'mic' ? ' — mic' : ' — system';
-  return icon + d.name + kindLbl + (d.default ? ' (default)' : '');
+  return icon + escHtml(d.name) + kindLbl + (d.default ? ' (default)' : '');
 }
 
 function populateDevices(devices, curIn, curOut) {
@@ -957,7 +956,7 @@ function populateDevices(devices, curIn, curOut) {
 
   outSel.innerHTML = '<option value="">Default device</option>' +
     (devices.outputs || []).map(d =>
-      `<option value="${d.index}">${d.name}${d.default ? ' (default)' : ''}</option>`).join('');
+      `<option value="${d.index}">${escHtml(d.name)}${d.default ? ' (default)' : ''}</option>`).join('');
 
   const inVal = (curIn !== null && curIn !== undefined) ? String(curIn) : '';
   const outVal = (curOut !== null && curOut !== undefined) ? String(curOut) : '';
@@ -1041,6 +1040,7 @@ function escAttr(s) {
   });
 });
 
+document.getElementById('forget-all-btn').addEventListener('click', forgetAllSpeakers);
 connect();
 </script>
 </body>
@@ -1061,6 +1061,7 @@ class UIServer:
         self._start_lock = threading.Lock()   # serialize start/stop clicks
         self._level_thread: threading.Thread | None = None
         self._level_stop = threading.Event()
+        self._stop_requested = False
         self._clients: list[WebSocket] = []
         self._state = "stopped"
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -1069,7 +1070,8 @@ class UIServer:
         # Standalone profile store for rename operations when pipeline is not running
         self._profiles = VoiceProfileStore(
             speaker_dir=cfg["_speaker_dir"],
-            threshold=float(cfg.get("speaker_id", {}).get("threshold", 0.75)),
+            threshold=float(cfg.get("speaker_id", {}).get(
+                "threshold", VoiceProfileStore.DEFAULT_THRESHOLD)),
         )
 
     # ── broadcast ────────────────────────────────────────────
@@ -1112,6 +1114,7 @@ class UIServer:
         if self._start_lock.locked():
             return
         with self._start_lock:
+            self._state = "loading"
             self._emit({"type": "status", "state": "loading"})
             try:
                 pipe = self._ensure_pipeline()        # first call loads models (slow)
@@ -1119,6 +1122,10 @@ class UIServer:
                 self._state = "stopped"
                 self._emit({"type": "status", "state": "stopped"})
                 self._emit({"type": "log", "msg": f"Pipeline init failed: {exc}"})
+                return
+            if self._stop_requested:                  # Stop clicked while loading
+                self._state = "stopped"
+                self._emit({"type": "status", "state": "stopped"})
                 return
             try:
                 pipe.start_listening()                # restart-safe
@@ -1129,51 +1136,72 @@ class UIServer:
                 return
             self._state = "running"
             self._emit({"type": "status", "state": "running"})
-            self._start_level_meter()
 
     def _start_level_meter(self):
+        """One long-lived thread: pushes the input level while listening and
+        reports capture/playback failures that happen mid-session."""
         if self._level_thread and self._level_thread.is_alive():
             return
-        self._level_stop.clear()
 
         def _loop():
-            import time
+            reported = None
             while not self._level_stop.is_set():
-                if self._pipeline and self._pipeline._listening:
-                    self._emit({"type": "level", "rms": float(self._pipeline.capture.level)})
+                pipe = self._pipeline
+                if pipe and pipe._listening:
+                    self._emit({"type": "level", "rms": float(pipe.capture.level)})
+                    err = pipe.capture.error or pipe.player.error
+                    if err and err != reported:
+                        reported = err
+                        self._emit({"type": "log", "msg": f"Audio device error: {err}"})
                 time.sleep(0.2)
 
         self._level_thread = threading.Thread(target=_loop, daemon=True, name="level-meter")
         self._level_thread.start()
 
     def _stop_pipeline(self):
-        self._level_stop.set()
-        if self._pipeline:
-            try:
-                self._pipeline.stop_listening()
-            except Exception as exc:
-                self._emit({"type": "log", "msg": f"Stop error: {exc}"})
-        self._state = "stopped"
+        if self._start_lock.locked():
+            self._stop_requested = True     # still loading: stop as soon as that finishes
+        with self._start_lock:
+            self._stop_requested = False
+            if self._pipeline:
+                try:
+                    self._pipeline.stop_listening()
+                except Exception as exc:
+                    self._emit({"type": "log", "msg": f"Stop error: {exc}"})
+            self._state = "stopped"
         self._emit({"type": "status", "state": "stopped"})
         self._emit({"type": "level", "rms": 0.0})
 
     # ── speaker rename ────────────────────────────────────────
 
+    def _store(self) -> VoiceProfileStore:
+        return self._pipeline.profiles if self._pipeline else self._profiles
+
     def _rename_speaker(self, msg: dict):
-        speaker_id = msg.get("speaker_id", "")
-        new_name = (msg.get("name") or "").strip()
-        if not speaker_id or not new_name:
+        old = (msg.get("speaker_id") or "").strip()     # current display name
+        new_name = (msg.get("name") or "").strip()[:60]
+        if not old or not new_name:
             return
-        # Apply to the live pipeline's store if running, else the UI store
-        store = (self._pipeline.profiles if self._pipeline else self._profiles)
-        store.rename_label(speaker_id, new_name)
-        # Also sync UI's own store when pipeline is live (so it persists after stop)
+        store = self._store()
+        if store.has_profile(old):
+            if self._pipeline:
+                self._pipeline.rename_speaker(old, new_name)
+            else:
+                store.rename_profile(old, new_name)
+        else:
+            store.rename_label(old, new_name)           # legacy: a pyannote label
         if self._pipeline:
-            self._profiles.rename_label(speaker_id, new_name)
-        self._emit({
-            "type": "speakers",
-            "speakers": store.list_profiles(),
-        })
+            # keep the standalone store in sync with what is now on disk
+            self._profiles = VoiceProfileStore(self._profiles.dir, self._profiles.threshold)
+        self._emit({"type": "speakers", "speakers": store.list_profiles(),
+                    "renamed": {"from": old, "to": new_name}})
+
+    def _reset_speakers(self):
+        if self._pipeline:
+            self._pipeline.reset_speakers()
+        self._profiles.clear()
+        self._emit({"type": "speakers", "speakers": {}, "reset": True})
+        self._emit({"type": "log", "msg": "All speakers forgotten."})
 
     # ── settings update ───────────────────────────────────────
 
@@ -1199,7 +1227,8 @@ class UIServer:
         if "voice_mode" in msg:
             self.cfg["tts"]["voice_mode"] = msg["voice_mode"]
         if "delay_ms" in msg:
-            self.cfg["playback"]["delay_ms"] = int(msg["delay_ms"])
+            msg["delay_ms"] = max(0, min(10000, int(msg["delay_ms"])))
+            self.cfg["playback"]["delay_ms"] = msg["delay_ms"]
             if self._pipeline:
                 self._pipeline.player.delay = int(msg["delay_ms"]) / 1000.0
 
@@ -1220,9 +1249,22 @@ class UIServer:
                 self._pipeline.player.out_index = idx
                 dev_changed = True
         # Re-open capture/playback streams so a new device takes effect immediately.
+        # Done off the event loop: closing/opening audio streams can take seconds.
         if dev_changed and self._pipeline and self._pipeline._listening:
-            self._pipeline.stop_listening()
-            self._pipeline.start_listening()
+            threading.Thread(target=self._restart_audio, daemon=True).start()
+
+    def _restart_audio(self):
+        with self._start_lock:
+            pipe = self._pipeline
+            if not (pipe and pipe._listening):
+                return
+            pipe.stop_listening()
+            try:
+                pipe.start_listening()
+            except Exception as exc:
+                self._state = "stopped"
+                self._emit({"type": "status", "state": "stopped"})
+                self._emit({"type": "log", "msg": f"Could not switch device: {exc}"})
 
     # ── FastAPI app ───────────────────────────────────────────
 
@@ -1232,6 +1274,7 @@ class UIServer:
         @app.on_event("startup")
         async def _capture_loop():
             self._loop = asyncio.get_running_loop()
+            self._start_level_meter()
 
         @app.get("/", response_class=HTMLResponse)
         async def root():
@@ -1242,7 +1285,7 @@ class UIServer:
             await websocket.accept()
             self._clients.append(websocket)
             # Send initial state + config + known speakers on connect
-            store = (self._pipeline.profiles if self._pipeline else self._profiles)
+            store = self._store()
             await websocket.send_text(json.dumps({
                 "type": "status",
                 "state": self._state,
@@ -1270,6 +1313,8 @@ class UIServer:
                         self._apply_config(msg)
                     elif t == "rename_speaker":
                         self._rename_speaker(msg)
+                    elif t == "reset_speakers":
+                        self._reset_speakers()
             except WebSocketDisconnect:
                 pass
             except Exception:

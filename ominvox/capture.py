@@ -3,6 +3,7 @@ resampled to the pipeline sample rate. This is the source of the movie audio."""
 from __future__ import annotations
 import queue
 import threading
+import time
 import numpy as np
 
 try:
@@ -129,10 +130,20 @@ class LoopbackCapture:
         self.device_index = device_index
         self.device_name: str | None = None   # set once the stream opens
         self.error: str | None = None          # set if the capture thread fails
-        self.level: float = 0.0                # live input RMS (decaying peak) for the UI meter
+        self._level = 0.0                      # last chunk RMS (see .level)
+        self._level_ts = 0.0
         self._q: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=64)
         self._stop = threading.Event()
+        self._opened = threading.Event()       # set once the stream opened (or failed)
         self._thread: threading.Thread | None = None
+
+    @property
+    def level(self) -> float:
+        """Live input RMS for the UI meter. Decays with time, so it falls to zero
+        when the source goes quiet (WASAPI loopback delivers NO data at all while
+        nothing is playing, so we can't rely on silent chunks arriving)."""
+        age = time.monotonic() - self._level_ts
+        return self._level * (0.5 ** (age / 0.3)) if age > 0.3 else self._level
 
     @classmethod
     def from_cfg(cls, cfg: dict) -> "LoopbackCapture":
@@ -197,18 +208,36 @@ class LoopbackCapture:
             self.device_name = dev["name"]
             frames = int(src_sr * self.block_ms / 1000)
             reported = int(dev.get("maxInputChannels", 2)) or 2
+            ch_box = [reported]
+
+            # Callback mode, not blocking read(): a loopback stream gets no data
+            # while nothing plays, so read() would block forever and stop() could
+            # never close the stream.
+            def _callback(in_data, frame_count, time_info, status):
+                a = np.frombuffer(in_data, dtype=np.float32).reshape(-1, ch_box[0]).mean(axis=1)
+                a = self._resample(a, src_sr, self.target_sr)
+                if len(a):
+                    rms = float(np.sqrt(np.mean(a * a)))
+                    self._level = max(rms, self.level * 0.85)
+                    self._level_ts = time.monotonic()
+                try:
+                    self._q.put_nowait(a)
+                except queue.Full:
+                    pass  # drop on backpressure to stay live
+                return (None, pyaudio.paContinue)
+
             # Some loopback devices (e.g. game headsets) reject their reported
             # channel count with -9998; try the reported value, then 2, then 1.
-            ch = None
             tried = []
             for c in dict.fromkeys([reported, 2, 1]):
+                ch_box[0] = c
                 try:
                     stream = pa.open(
                         format=pyaudio.paFloat32, channels=c, rate=src_sr,
                         frames_per_buffer=frames, input=True,
                         input_device_index=dev["index"],
+                        stream_callback=_callback,
                     )
-                    ch = c
                     break
                 except Exception as e:
                     tried.append(f"{c}ch({e})")
@@ -217,24 +246,16 @@ class LoopbackCapture:
                 raise RuntimeError(
                     f"could not open '{dev['name']}' at {src_sr} Hz "
                     f"[tried {', '.join(tried)}]")
+            stream.start_stream()
             print(f"[capture] device [{dev['index']}] {dev['name']} "
-                  f"({src_sr} Hz, {ch} ch)", flush=True)
-            while not self._stop.is_set():
-                raw = stream.read(frames, exception_on_overflow=False)
-                a = np.frombuffer(raw, dtype=np.float32).reshape(-1, ch).mean(axis=1)
-                a = self._resample(a, src_sr, self.target_sr)
-                # decaying-peak level meter (so the UI can confirm the source is live)
-                if len(a):
-                    rms = float(np.sqrt(np.mean(a * a)))
-                    self.level = max(rms, self.level * 0.85)
-                try:
-                    self._q.put_nowait(a)
-                except queue.Full:
-                    pass  # drop on backpressure to stay live
+                  f"({src_sr} Hz, {ch_box[0]} ch)", flush=True)
+            self._opened.set()
+            self._stop.wait()
         except Exception as e:
             self.error = str(e)
             print(f"[capture] ERROR: {e}", flush=True)
         finally:
+            self._opened.set()
             if stream is not None:
                 try:
                     stream.stop_stream(); stream.close()
@@ -254,9 +275,16 @@ class LoopbackCapture:
         if pyaudio is None:
             raise RuntimeError("PyAudioWPatch not available (Windows only). pip install PyAudioWPatch")
         self._stop.clear()                 # reset so a restart actually runs
+        self._opened.clear()
+        self.error = None
+        self._level = 0.0
         self._drain()                      # discard stale audio from a prior session
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True, name="capture")
         self._thread.start()
+        # Surface "device won't open" to the caller instead of failing silently.
+        self._opened.wait(timeout=10)
+        if self.error:
+            raise RuntimeError(f"Audio input failed: {self.error}")
 
     def _drain(self):
         try:
@@ -266,11 +294,14 @@ class LoopbackCapture:
             pass
 
     def chunks(self):
+        """Yield audio chunks. Yields None when no audio arrived for one block
+        (source paused/silent), so consumers can treat it as silence."""
+        wait = max(self.block_ms / 1000.0, 0.05)
         while not self._stop.is_set():
             try:
-                yield self._q.get(timeout=1.0)
+                yield self._q.get(timeout=wait)
             except queue.Empty:
-                continue
+                yield None
 
     def stop(self):
         self._stop.set()

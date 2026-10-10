@@ -148,14 +148,23 @@ with tempfile.TemporaryDirectory() as tmpdir:
     except Exception as e:
         fail("identify 2 speakers", str(e))
 
-    # B.5 resolve — manual label_map wins
+    # B.5 resolve — the voice decides, not the pyannote label. Each utterance is
+    # diarized on its own, so the dominant label is almost always SPEAKER_00 for
+    # everyone; trusting it collapsed every speaker into one profile.
     try:
-        far_emb = distinct(alice_emb)
-        name = store.resolve("SPEAKER_00", far_emb)  # label_map wins over embedding
-        assert name == "Alice", f"expected 'Alice' from label_map, got {name!r}"
-        ok("resolve: manual label_map wins over embedding match")
+        bob_like = noisy(bob_emb, noise=0.05)
+        name = store.resolve("SPEAKER_00", bob_like)   # SPEAKER_00 is bound to Alice
+        assert name == "Bob", f"expected 'Bob' from the embedding, got {name!r}"
+        ok("resolve: embedding wins over a stale pyannote label")
     except Exception as e:
-        fail("resolve label_map priority", str(e))
+        fail("resolve embedding priority", str(e))
+
+    # B.5b resolve — label map is still the fallback without an embedding
+    try:
+        assert store.resolve("SPEAKER_00", None) == "Alice"
+        ok("resolve: label_map used when no embedding is available")
+    except Exception as e:
+        fail("resolve label fallback", str(e))
 
     # B.6 resolve — embedding match for new label
     try:
@@ -177,15 +186,36 @@ with tempfile.TemporaryDirectory() as tmpdir:
     except Exception as e:
         fail("resolve auto Unknown", str(e))
 
-    # B.8 rename_label
+    # B.8 rename_profile
     try:
-        unknown_name = store.resolve("SPEAKER_88", rand_emb())
+        charlie_emb = rand_emb()
+        unknown_name = store.resolve("SPEAKER_00", charlie_emb)
         assert unknown_name.startswith("Unknown")
-        store.rename_label("SPEAKER_88", "Charlie")
-        assert store.get_label_map().get("SPEAKER_88") == "Charlie"
+        assert store.rename_profile(unknown_name, "Charlie")
         assert "Charlie" in store.profile_names
         assert unknown_name not in store.profile_names, "old Unknown profile should be removed"
-        ok("rename_label: Unknown profile transferred to named profile")
+        assert store.resolve("SPEAKER_00", noisy(charlie_emb, 0.03)) == "Charlie"
+        ok("rename_profile: Unknown renamed, later utterances resolve to new name")
+    except Exception as e:
+        fail("rename_profile", str(e))
+
+    # B.8b rename onto an existing name merges the two profiles
+    try:
+        split_name = store.resolve("SPEAKER_00", distinct(charlie_emb))
+        n_before = len(store._profiles["Charlie"].embeddings)
+        assert store.rename_profile(split_name, "Charlie")
+        assert split_name not in store.profile_names
+        assert len(store._profiles["Charlie"].embeddings) == n_before + 1
+        ok("rename_profile: renaming onto an existing name merges profiles")
+    except Exception as e:
+        fail("rename_profile merge", str(e))
+
+    # B.8c legacy rename_label still binds a label
+    try:
+        store.rename_label("SPEAKER_88", "Dana")
+        assert store.get_label_map().get("SPEAKER_88") == "Dana"
+        assert "Dana" in store.profile_names
+        ok("rename_label: binds a pyannote label to a name (legacy path)")
     except Exception as e:
         fail("rename_label", str(e))
 
@@ -340,15 +370,59 @@ with tempfile.TemporaryDirectory() as tmpdir:
     try:
         store = VoiceProfileStore(Path(tmpdir))
         far_emb = rand_emb(192)
-        name1 = store.resolve("SPEAKER_99", far_emb)
+        name1 = store.resolve("SPEAKER_00", far_emb)
         assert name1.startswith("Unknown")
-        store.rename_label("SPEAKER_99", "Charlie")
-        # Next utterance with same label gets "Charlie"
-        name2 = store.resolve("SPEAKER_99", noisy(far_emb, 0.03))
+        store.rename_profile(name1, "Charlie")
+        # Next utterance from the same voice gets "Charlie"
+        name2 = store.resolve("SPEAKER_00", noisy(far_emb, 0.03))
         assert name2 == "Charlie", f"expected 'Charlie' after rename, got {name2!r}"
         ok("Pipeline resolve: rename persists for subsequent utterances")
     except Exception as e:
         fail("Pipeline resolve rename", str(e))
+
+# D.4b Two different voices that pyannote both calls SPEAKER_00 stay separate
+with tempfile.TemporaryDirectory() as tmpdir:
+    try:
+        store = VoiceProfileStore(Path(tmpdir))
+        a, b = rand_emb(192), rand_emb(192)
+        while _cosine(a, b) > 0.5:
+            b = rand_emb(192)
+        n_a = store.resolve("SPEAKER_00", a)
+        n_b = store.resolve("SPEAKER_00", b)
+        assert n_a != n_b, f"two voices collapsed into {n_a!r}"
+        assert store.resolve("SPEAKER_00", noisy(a, 0.03)) == n_a
+        assert store.resolve("SPEAKER_00", noisy(b, 0.03)) == n_b
+        ok("Pipeline resolve: distinct voices stay distinct under one pyannote label",
+           f"{n_a!r} / {n_b!r}")
+    except Exception as e:
+        fail("Pipeline resolve distinct voices", str(e))
+
+# D.4c clear() forgets everything and restarts numbering
+with tempfile.TemporaryDirectory() as tmpdir:
+    try:
+        store = VoiceProfileStore(Path(tmpdir))
+        store.resolve("SPEAKER_00", rand_emb(192))
+        store.clear()
+        assert store.profile_names == []
+        assert VoiceProfileStore(Path(tmpdir)).profile_names == [], "clear() not persisted"
+        assert store.resolve("SPEAKER_00", rand_emb(192)) == "Unknown 1"
+        ok("clear(): forgets all speakers (persisted) and restarts at Unknown 1")
+    except Exception as e:
+        fail("clear()", str(e))
+
+# D.4d profiles saved with a different embedding size must not break matching
+with tempfile.TemporaryDirectory() as tmpdir:
+    try:
+        old = VoiceProfileStore(Path(tmpdir))
+        old.enroll("Legacy", rand_emb(192))
+        s2 = VoiceProfileStore(Path(tmpdir))
+        name = s2.resolve("SPEAKER_00", rand_emb(256))   # real WeSpeaker size
+        assert name.startswith("Unknown"), name
+        s2.rename_profile(name, "Legacy")                # merge 256 into 192 profile
+        assert s2.identify(rand_emb(256)) in (None, "Legacy")
+        ok("mixed embedding sizes (192 vs 256) are skipped, not a crash")
+    except Exception as e:
+        fail("mixed embedding sizes", str(e))
 
 # D.5 Cross-session: save, reload, new pyannote label still matches
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -391,9 +465,12 @@ async def ws_rename_round_trip():
         _s.bind(("127.0.0.1", 0))
         free_port = _s.getsockname()[1]
 
-    srv = UIServer(cfg)
+    # Use a throwaway speaker dir so the test never touches the user's real profiles
+    tmp_cfg = dict(cfg)
+    tmp_cfg["_speaker_dir"] = Path(tempfile.mkdtemp())
+    srv = UIServer(tmp_cfg)
     # Pre-populate with an Unknown speaker so rename has something to work with
-    srv._profiles.resolve("SPEAKER_00", rand_emb(192))  # creates "Unknown 1"
+    first = srv._profiles.resolve("SPEAKER_00", rand_emb(192))  # creates "Unknown 1"
 
     app = srv._build_app()
 
@@ -415,7 +492,7 @@ async def ws_rename_round_trip():
         # Send rename
         await ws.send(json.dumps({
             "type": "rename_speaker",
-            "speaker_id": "SPEAKER_00",
+            "speaker_id": first,          # the UI sends the current display name
             "name": "Alice",
         }))
 
@@ -442,6 +519,8 @@ try:
     assert rename_reply.get("type") == "speakers", f"wrong type: {rename_reply}"
     assert "Alice" in rename_reply.get("speakers", {}), \
         f"Alice not in speakers after rename: {rename_reply}"
+    assert "Unknown 1" not in rename_reply.get("speakers", {}), \
+        f"old name still listed after rename: {rename_reply}"
     ok("WS rename_speaker: server broadcasts updated speakers list",
        f"speakers={list(rename_reply['speakers'].keys())}")
 except Exception as e:

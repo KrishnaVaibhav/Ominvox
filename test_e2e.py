@@ -18,7 +18,31 @@ import numpy as np
 os.environ.setdefault("COQUI_TOS_AGREED", "1")
 
 UI_HOST = "127.0.0.1"
-UI_PORT = 8765
+
+
+def _free_port() -> int:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((UI_HOST, 0))
+        return s.getsockname()[1]
+
+
+def _start_ui_server():
+    """Run a real UIServer in a background thread so A-C need no manual setup."""
+    import uvicorn
+    from ominvox import config as _c
+    from ominvox.ui import UIServer
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(UIServer(_c.load())._build_app(),
+                                           host=UI_HOST, port=port, log_level="error"))
+    threading.Thread(target=server.run, daemon=True).start()
+    deadline = time.time() + 15
+    while not server.started and time.time() < deadline:
+        time.sleep(0.05)
+    return server, port
+
+
+_UI_SERVER, UI_PORT = _start_ui_server()
 UI_BASE = f"http://{UI_HOST}:{UI_PORT}"
 WS_URL  = f"ws://{UI_HOST}:{UI_PORT}/ws"
 
@@ -370,6 +394,7 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+_UI_SERVER.should_exit = True
 print(f"\n{'='*60}")
 print(f"Results: {len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

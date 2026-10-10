@@ -26,6 +26,18 @@ from .player import Player
 from .speaker_id import VoiceProfileStore
 
 
+def voiced_seconds(audio: np.ndarray, sr: int) -> float:
+    """Seconds of actual voice in a clip (20 ms frames with real energy). Segments
+    carry trailing silence, so their raw length overstates how much speech
+    the speaker embedding had to work with."""
+    frame = max(1, sr // 50)
+    n = len(audio) // frame
+    if n == 0:
+        return 0.0
+    rms = np.sqrt((audio[: n * frame].reshape(n, frame) ** 2).mean(axis=1))
+    return float((rms > max(0.1 * rms.max(), 1e-4)).sum()) * frame / sr
+
+
 class Pipeline:
     def __init__(self, cfg: dict, log=print, notify=None):
         self.cfg = cfg
@@ -37,6 +49,9 @@ class Pipeline:
         self.vad = VAD(cfg["audio"]["sample_rate"])
         log("Loading diarizer…")
         self.diar = Diarizer(cfg)
+        if self.diar.enabled and self.diar.pipeline is None:
+            log("Speaker separation is OFF (Hugging Face token missing or not accepted) "
+                "- everyone will share one voice. See README step 4-5.")
         log("Loading STT (Whisper)…")
         self.stt = STT(cfg)
         log("Preparing translation…")
@@ -45,7 +60,6 @@ class Pipeline:
         self.synth = VoiceSynth(cfg)
         self.player = Player(cfg)
         log("Pipeline ready — play your movie.")
-        self._whisper_translate = cfg["mt"]["backend"] == "whisper"
         self._seg_q: queue.Queue[np.ndarray] = queue.Queue(maxsize=8)
         self._done = threading.Event()
         # Restartable listening state. Models above stay loaded across start/stop
@@ -58,10 +72,14 @@ class Pipeline:
         self._silence_thresh: int = int(vad_cfg.get("silence_chunks", 5))
         self._max_seg_s: float = float(vad_cfg.get("max_segment_s", 8.0))
 
+        sid_cfg = cfg.get("speaker_id", {})
         self.profiles = VoiceProfileStore(
             speaker_dir=cfg["_speaker_dir"],
-            threshold=float(cfg.get("speaker_id", {}).get("threshold", 0.75)),
+            threshold=float(sid_cfg.get("threshold", VoiceProfileStore.DEFAULT_THRESHOLD)),
         )
+        # Lines with less actual speech than this give unreliable voice
+        # embeddings (measured: one-word lines have <= 1.45 s of voiced audio).
+        self._min_id_seconds = float(sid_cfg.get("min_seconds", 1.6))
 
     # ------------------------------------------------------------------
     # Segment accumulator (runs in main thread)
@@ -78,6 +96,18 @@ class Pipeline:
         for chunk in self.capture.chunks():
             if self._done.is_set():
                 break
+
+            if chunk is None:
+                # No audio arrived (source paused). Count it as silence so the
+                # last sentence before a pause is flushed instead of stuck.
+                if buf:
+                    silence_run += 1
+                    if silence_run >= self._silence_thresh:
+                        self._flush(buf)
+                        buf = []
+                        buf_len = 0
+                        silence_run = 0
+                continue
 
             if self.vad.is_speech(chunk):
                 buf.append(chunk)
@@ -130,17 +160,18 @@ class Pipeline:
 
     def _process_utterance(self, audio: np.ndarray):
         pyannote_label, embedding = self.diar.label_and_embed(audio)
-        display_name = self.profiles.resolve(pyannote_label, embedding)
+        display_name = self.profiles.resolve(
+            pyannote_label, embedding,
+            reliable=voiced_seconds(audio, self.cfg["audio"]["sample_rate"]) >= self._min_id_seconds)
 
         # TTS voice cloning keyed on display name so named speakers share a voice
         self.synth.registry.add_audio(display_name, audio)
 
-        text, src = self.stt.transcribe(audio, translate_to_en=self._whisper_translate)
+        text, src = self.stt.transcribe(audio, translate_to_en=self.mt.whisper_handles())
         if not text:
             return
 
-        translated = self.mt.translate(text, src)
-        tgt = self.cfg["translate"]["target_lang"]
+        translated, tgt = self.mt.translate_ex(text, src)
         self.log(f"[{display_name}] {src}->{tgt}: {translated}")
         self._notify({
             "type": "utterance",
@@ -160,9 +191,23 @@ class Pipeline:
             },
         })
 
-        wav = self.synth.speak(translated, display_name)
+        wav = self.synth.speak(translated, display_name, language=tgt)
         if wav is not None:
             self.player.submit(wav)
+
+    # ------------------------------------------------------------------
+    # Speaker management (called from the UI thread)
+    # ------------------------------------------------------------------
+
+    def rename_speaker(self, old: str, new: str) -> bool:
+        if not self.profiles.rename_profile(old, new):
+            return False
+        self.synth.registry.rename(old, new)
+        return True
+
+    def reset_speakers(self):
+        self.profiles.clear()
+        self.synth.registry.clear()
 
     # ------------------------------------------------------------------
     # Entry point
@@ -181,8 +226,12 @@ class Pipeline:
         except queue.Empty:
             pass
 
-        self.capture.start()          # may raise if no loopback device
-        self.player.start()
+        self.capture.start()          # raises if the input device won't open
+        try:
+            self.player.start()       # raises if the output device won't open
+        except Exception:
+            self.capture.stop()
+            raise
         self._gpu_t = threading.Thread(target=self._gpu_worker, daemon=True, name="gpu-worker")
         self._gpu_t.start()
         self._builder_t = threading.Thread(target=self._build_segments, daemon=True, name="seg-builder")

@@ -38,13 +38,19 @@ diarize:
   hf_token: ""                 # leave empty; put HF_TOKEN=... in .env (gated model)
 
 mt:
-  backend: "whisper"           # whisper (translate-to-en) | nllb
+  # auto    = Whisper's fast built-in translation when target is English,
+  #           NLLB-200 for any other target (downloads ~2.5 GB on first use)
+  # whisper = English output only;  nllb = always NLLB
+  backend: "auto"
   nllb_model: "facebook/nllb-200-distilled-600M"
 
 tts:
   backend: "xtts"              # xtts | openvoice
   voice_mode: "match"          # match | preset | single
   preset_voice: ""             # path to a reference wav when voice_mode != match
+  # Built-in XTTS voice for "single" mode (and when no preset wav is given).
+  # Before a speaker has min_ref_seconds of audio, match mode also uses built-in voices.
+  fallback_voice: "Claribel Dervla"
   min_ref_seconds: 6           # audio needed before cloning a new speaker
 
 vad:
@@ -52,8 +58,11 @@ vad:
   max_segment_s: 8.0           # force-cut an utterance at this length (avoids unbounded buffers)
 
 speaker_id:
-  threshold: 0.75              # cosine similarity floor for voice-profile matching
-  # 0.75 is conservative — same speaker is typically 0.85-0.95, different 0.2-0.6
+  threshold: 0.68              # cosine similarity floor for voice-profile matching
+  # Measured on real speech (clips >= 2 s): same voice >= 0.71, different <= 0.65.
+  # Raise if different people get merged; lower if one person gets split.
+  min_seconds: 1.6             # seconds of actual speech; shorter lines (a word or two) are
+                               # given to the closest known speaker, never learned from
 
 playback:
   delay_ms: 1500               # buffer to absorb pipeline jitter (subtitle-style offset)

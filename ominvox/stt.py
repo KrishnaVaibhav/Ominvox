@@ -12,7 +12,7 @@ except Exception:  # pragma: no cover
 class STT:
     def __init__(self, cfg: dict):
         self.cfg = cfg["stt"]
-        self.source_lang = cfg["translate"]["source_lang"]
+        self._translate_cfg = cfg["translate"]   # read live: the UI can change it
         self.model = None
         if WhisperModel is not None:
             self.model = WhisperModel(
@@ -25,7 +25,8 @@ class STT:
     def transcribe(self, audio: np.ndarray, translate_to_en: bool = False):
         if self.model is None:
             return "", "en"
-        lang = None if self.source_lang == "auto" else self.source_lang
+        src = self._translate_cfg.get("source_lang", "auto")
+        lang = None if src in (None, "", "auto") else src
         segments, info = self.model.transcribe(
             audio,
             language=lang,

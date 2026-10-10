@@ -309,18 +309,19 @@ section("4. MT — multi-language NLLB translations & whisper pass-through")
 
 from ominvox.mt import Translator
 
-# 4.1 Whisper-backend pass-through (current default)
+# 4.1 auto backend, English target: Whisper handles it, translate() passes through
 try:
-    mt_wsp = Translator(cfg)
-    assert mt_wsp.backend == "whisper"
+    en_cfg = copy.deepcopy(cfg)
+    en_cfg["mt"]["backend"] = "auto"
+    en_cfg["translate"]["target_lang"] = "en"
+    mt_wsp = Translator(en_cfg)
+    assert mt_wsp.whisper_handles(), "auto + target en should use Whisper translate"
     r = mt_wsp.translate("Hello world", "en")
     assert r == "Hello world", f"expected pass-through, got {r!r}"
-    ok("MT whisper backend: translate() is a pass-through (expected)")
-    warn("MT whisper backend limitation",
-         "With backend=whisper all output is English (translation occurs inside STT). "
-         "Switch to backend=nllb for true multi-language OUTPUT.")
+    assert mt_wsp.model is None, "NLLB must not load while target is English"
+    ok("MT auto backend (target en): Whisper path, NLLB not loaded")
 except Exception as e:
-    fail("MT whisper pass-through", str(e))
+    fail("MT auto backend en pass-through", str(e))
 
 # 4.2 Load NLLB and test multi-language translations
 nllb_cfg = copy.deepcopy(cfg)

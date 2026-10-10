@@ -26,11 +26,27 @@ class Diarizer:
         self.pipeline = None
         self._embed_infer = None  # lazy-initialised in embed()
 
+        self.error: str | None = None
         if self.enabled and Pipeline is not None:
-            self.pipeline = Pipeline.from_pretrained(
-                cfg["diarize"]["model"], token=self._hf_token
-            )
-            if torch is not None and torch.cuda.is_available():
+            try:
+                self.pipeline = Pipeline.from_pretrained(
+                    cfg["diarize"]["model"], token=self._hf_token
+                )
+            except Exception as exc:
+                self.pipeline = None
+                self.error = str(exc)
+            if self.pipeline is None:
+                # Gated model + missing/invalid token: keep running as one speaker
+                # rather than refusing to start.
+                hint = ("no HF_TOKEN set - create a .env file with HF_TOKEN=hf_..."
+                        if not self._hf_token else
+                        "check HF_TOKEN in .env and that you accepted the model terms on "
+                        "huggingface.co (pyannote/speaker-diarization-3.1 and "
+                        "pyannote/segmentation-3.0)")
+                print(f"[diarize] speaker separation disabled: {hint}", flush=True)
+                if self.error:
+                    print(f"[diarize]   ({self.error.splitlines()[0][:200]})", flush=True)
+            elif torch is not None and torch.cuda.is_available():
                 self.pipeline.to(torch.device("cuda"))
 
     # ── diarization ────────────────────────────────────────────

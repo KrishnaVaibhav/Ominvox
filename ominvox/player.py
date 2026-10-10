@@ -25,6 +25,8 @@ class Player:
         self.out_index = cfg["playback"].get("output_device_index", None)
         self._q: "queue.Queue[tuple[float, np.ndarray]]" = queue.Queue()
         self._stop = threading.Event()
+        self._opened = threading.Event()
+        self.error: str | None = None
         self._t: threading.Thread | None = None
 
     def start(self):
@@ -34,35 +36,48 @@ class Player:
                 self._q.get_nowait()
         except queue.Empty:
             pass
-        self._t = threading.Thread(target=self._run, daemon=True)
+        self.error = None
+        self._opened.clear()
+        self._t = threading.Thread(target=self._run, daemon=True, name="player")
         self._t.start()
+        self._opened.wait(timeout=10)
+        if self.error:
+            raise RuntimeError(f"Audio output failed: {self.error}")
 
     def submit(self, audio: np.ndarray):
         self._q.put((time.time() + self.delay, audio))
 
     def _run(self):
         if pyaudio is None:
+            self._opened.set()
             return
         pa = pa_new()
-        open_kwargs = dict(format=pyaudio.paFloat32, channels=1, rate=self.sr, output=True)
-        if self.out_index is not None:
-            open_kwargs["output_device_index"] = int(self.out_index)
-        stream = pa.open(**open_kwargs)
+        stream = None
         try:
+            open_kwargs = dict(format=pyaudio.paFloat32, channels=1, rate=self.sr, output=True)
+            if self.out_index is not None:
+                open_kwargs["output_device_index"] = int(self.out_index)
+            stream = pa.open(**open_kwargs)
+            self._opened.set()
             while not self._stop.is_set():
                 try:
                     play_at, audio = self._q.get(timeout=0.5)
                 except queue.Empty:
                     continue
                 wait = play_at - time.time()
-                if wait > 0:
-                    time.sleep(wait)
-                stream.write(audio.tobytes())
+                if wait > 0 and self._stop.wait(wait):
+                    break
+                stream.write(np.ascontiguousarray(audio, dtype=np.float32).tobytes())
+        except Exception as e:
+            self.error = str(e)
+            print(f"[player] ERROR: {e}", flush=True)
         finally:
-            try:
-                stream.stop_stream(); stream.close()
-            except Exception:
-                pass
+            self._opened.set()
+            if stream is not None:
+                try:
+                    stream.stop_stream(); stream.close()
+                except Exception:
+                    pass
             pa_term(pa)
 
     def stop(self):

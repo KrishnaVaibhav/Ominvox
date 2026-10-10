@@ -189,18 +189,16 @@ else:
     if synth_obj and synth_obj.tts:
         ref_wav = check("make test reference wav", make_ref_wav)
         if ref_wav:
-            check("VoiceSynth._compute_latents from sine ref",
-                  lambda: synth_obj._compute_latents(ref_wav, "_test") is not None)
-            check("VoiceSynth.speak short sentence with cached latents",
-                  lambda: (
-                      synth_obj.registry.set_latents(
-                          "_test",
-                          *synth_obj._compute_latents(ref_wav, "_test")
-                      ) if synth_obj.registry.latents("_test") is None else None,
-                      isinstance(synth_obj.speak("Hello.", "_test"), np.ndarray)
-                  ))
+            check("VoiceSynth._latents_for(wav) from sine ref",
+                  lambda: synth_obj._latents_for("wav", ref_wav, "_test") is not None)
+            check("VoiceSynth.speak short sentence (built-in voice before cloning)",
+                  lambda: isinstance(synth_obj.speak("Hello.", "_test"), np.ndarray))
             check("VoiceSynth.speak output dtype is float32",
                   lambda: synth_obj.speak("Hi there.", "_test").dtype == np.float32)
+            check("VoiceSynth.speak Chinese target maps zh -> zh-cn",
+                  lambda: isinstance(synth_obj.speak("你好。", "_test", language="zh"), np.ndarray))
+            check("VoiceSynth.speak unsupported language returns None (no crash)",
+                  lambda: synth_obj.speak("Hej.", "_test", language="sv") is None)
     elif synth_obj:
         print("  SKIP  XTTS inference — TTS model object not initialised")
 

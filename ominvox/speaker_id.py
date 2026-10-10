@@ -48,6 +48,10 @@ class SpeakerProfile:
 
     def add(self, emb: np.ndarray):
         emb = _unit(emb.flatten().astype(np.float32))
+        if self.embeddings and self.embeddings[0].shape != emb.shape:
+            # Embedding model changed (or stale test data): old vectors can't be
+            # compared with new ones, so start this profile over.
+            self.embeddings = []
         self.embeddings.append(emb)
         if len(self.embeddings) > self.MAX_STORED:
             # Keep the most recent embeddings; they reflect the current voice best
@@ -66,7 +70,9 @@ class VoiceProfileStore:
     """
 
     PROFILES_FILE = "profiles.json"
-    DEFAULT_THRESHOLD = 0.75
+    # Measured on WeSpeaker embeddings of real speech (clips >= 2 s): same voice
+    # scored >= 0.71, different voices <= 0.65.
+    DEFAULT_THRESHOLD = 0.68
 
     def __init__(self, speaker_dir: Path, threshold: float = DEFAULT_THRESHOLD):
         self.dir = Path(speaker_dir)
@@ -92,7 +98,7 @@ class VoiceProfileStore:
                 prof = SpeakerProfile(name=name)
                 for b64 in info.get("embeddings", []):
                     try:
-                        prof.embeddings.append(_b64_to_emb(b64))
+                        prof.add(_b64_to_emb(b64))
                     except Exception:
                         pass
                 self._profiles[name] = prof
@@ -117,56 +123,74 @@ class VoiceProfileStore:
 
     # ── identification ─────────────────────────────────────────
 
-    def identify(self, embedding: np.ndarray) -> str | None:
-        """Return name of best matching profile, or None if below threshold."""
-        best_name, best_sim = None, self.threshold - 1e-9
+    def best_match(self, embedding: np.ndarray) -> tuple[str | None, float]:
+        """(closest profile name, cosine similarity) regardless of threshold."""
+        best_name, best_sim = None, -1.0
         flat = embedding.flatten()
         for name, prof in self._profiles.items():
             c = prof.centroid
-            if c is None:
+            if c is None or c.shape != flat.shape:   # different embedding model
                 continue
             sim = _cosine(flat, c)
             if sim > best_sim:
                 best_sim, best_name = sim, name
-        return best_name
+        return best_name, best_sim
 
-    def resolve(self, pyannote_label: str, embedding: np.ndarray | None) -> str:
-        """Map a pyannote label to a display name.
+    def identify(self, embedding: np.ndarray) -> str | None:
+        """Return name of best matching profile, or None if below threshold."""
+        name, sim = self.best_match(embedding)
+        return name if name is not None and sim >= self.threshold else None
 
-        Priority:
-          1. Manual label_map entry (user renamed this label)
-          2. Embedding cosine match against enrolled profiles
-          3. Auto-assign "Unknown N" (session-scoped, preserved across restarts)
+    def resolve(self, pyannote_label: str, embedding: np.ndarray | None,
+                reliable: bool = True) -> str:
+        """Map an utterance to a display name.
+
+        pyannote diarizes each utterance on its own, so its labels restart at
+        SPEAKER_00 every call and say nothing about identity across utterances.
+        The voice embedding is therefore the source of truth:
+          1. Embedding cosine match against known profiles
+          2. No match -> new "Unknown N" profile
+        The pyannote label is only used as a fallback when no embedding exists.
+
+        reliable=False marks a short clip (a word or two). Its embedding is too
+        noisy to trust: it is matched to the closest known speaker without being
+        learned from, and never creates a new speaker unless none exist yet.
         """
-        # 1. Manual rename wins
-        if pyannote_label in self._label_map:
-            name = self._label_map[pyannote_label]
-            if embedding is not None and name in self._profiles:
-                prof = self._profiles[name]
-                c = prof.centroid
-                # Only update the profile with embeddings that are consistent with
-                # the existing centroid — guards against pyannote mislabelling
-                if c is None or _cosine(embedding.flatten(), c) >= self.threshold:
-                    prof.add(embedding)
-            return name
+        if embedding is not None and not reliable:
+            name, _ = self.best_match(embedding)
+            if name:
+                return name
+            return self._new_unknown(embedding)
 
-        # 2. Embedding match
         if embedding is not None:
             name = self.identify(embedding)
             if name:
-                self._label_map[pyannote_label] = name
-                self._profiles[name].add(embedding)
+                prof = self._profiles[name]
+                prof.add(embedding)
+                if len(prof.embeddings) % 5 == 0:   # persist learning without a write per line
+                    self.save()
                 return name
+            return self._new_unknown(embedding)
 
-        # 3. Auto-assign Unknown N
-        auto = f"Unknown {self._next_unknown}"
-        self._next_unknown += 1
-        self._label_map[pyannote_label] = auto
-        self._profiles[auto] = SpeakerProfile(name=auto)
-        if embedding is not None:
-            self._profiles[auto].add(embedding)
+        # No embedding model available: best effort via the label map.
+        if pyannote_label in self._label_map:
+            return self._label_map[pyannote_label]
+        name = self._new_unknown(None)
+        self._label_map[pyannote_label] = name
         self.save()
-        return auto
+        return name
+
+    def _new_unknown(self, embedding: np.ndarray | None) -> str:
+        name = f"Unknown {self._next_unknown}"
+        while name in self._profiles:
+            self._next_unknown += 1
+            name = f"Unknown {self._next_unknown}"
+        self._next_unknown += 1
+        self._profiles[name] = SpeakerProfile(name=name)
+        if embedding is not None:
+            self._profiles[name].add(embedding)
+        self.save()
+        return name
 
     # ── enrollment ─────────────────────────────────────────────
 
@@ -207,6 +231,33 @@ class VoiceProfileStore:
                 self._profiles[new_name].add(emb)
 
         self._label_map[pyannote_label] = new_name
+        self.save()
+
+    def rename_profile(self, old_name: str, new_name: str) -> bool:
+        """Rename a profile. If new_name already exists the two are merged
+        (useful when one person was split into two "Unknown" profiles)."""
+        if old_name == new_name or old_name not in self._profiles:
+            return False
+        old = self._profiles.pop(old_name)
+        if new_name in self._profiles:
+            for emb in old.embeddings:
+                self._profiles[new_name].add(emb)
+        else:
+            old.name = new_name
+            self._profiles[new_name] = old
+        self._label_map = {k: (new_name if v == old_name else v)
+                           for k, v in self._label_map.items()}
+        self.save()
+        return True
+
+    def has_profile(self, name: str) -> bool:
+        return name in self._profiles
+
+    def clear(self):
+        """Forget every speaker (e.g. when switching to a different movie)."""
+        self._profiles.clear()
+        self._label_map.clear()
+        self._next_unknown = 1
         self.save()
 
     def delete_profile(self, name: str):

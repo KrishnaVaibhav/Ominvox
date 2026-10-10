@@ -25,6 +25,22 @@ $uv     = Join-Path $root ".tools\uv.exe"
 $venv   = Join-Path $root ".venv312"
 $venvPy = Join-Path $venv "Scripts\python.exe"
 
+# --- fetch the portable uv into .tools if it isn't there yet (it's gitignored) ---
+if (-not (Test-Path $uv)) {
+  $tools = Join-Path $root ".tools"
+  $zip   = Join-Path $env:TMP "uv.zip"
+  $url   = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+  Write-Output "=== uv.exe not found - downloading it into .tools ==="
+  New-Item -ItemType Directory -Force $tools | Out-Null
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+  Expand-Archive -Path $zip -DestinationPath $tools -Force
+  Remove-Item $zip -Force
+  if (-not (Test-Path $uv)) {
+    throw "Could not get uv.exe. Download uv-x86_64-pc-windows-msvc.zip from https://github.com/astral-sh/uv/releases/latest and put uv.exe in $tools"
+  }
+}
+
 Write-Output "=== uv: $uv ==="
 & $uv --version
 
