@@ -18,7 +18,20 @@ def _pin_caches(cache_dir: Path) -> None:
     os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
 
 
+def _load_dotenv(env_path: Path) -> None:
+    """Read KEY=VALUE lines from .env (gitignored) into os.environ, without overriding."""
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
 def load(path: str | os.PathLike | None = None) -> dict:
+    _load_dotenv(ROOT / ".env")
     cfg_path = Path(path) if path else ROOT / "config.yaml"
     with open(cfg_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)

@@ -32,7 +32,7 @@ cd /d D:\GitHub\Ominvox
 setup.bat
 ```
 
-Edit the CUDA index-url in `setup.bat` to match your GPU driver. Put your Hugging Face token in `config.yaml` (`diarize.hf_token`) — the pyannote model is gated.
+Edit the CUDA index-url in `setup.bat` to match your GPU driver. Put your Hugging Face token in a `.env` file at the project root (`HF_TOKEN=hf_...`) — the pyannote model is gated. `.env` is gitignored.
 
 ## Run
 

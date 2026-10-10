@@ -30,6 +30,7 @@ setup_uv_log.txt
 
 # local Claude Code settings
 .claude/settings.local.json
+.claude/*
 
 # secrets / OS / editor
 .env
@@ -37,3 +38,4 @@ setup_uv_log.txt
 Thumbs.db
 .vscode/
 .idea/
+

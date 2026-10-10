@@ -6,6 +6,7 @@ pyannote's internal WeSpeaker ResNet34 model (already in GPU memory from the
 diarization pipeline, so no extra VRAM cost beyond initial setup).
 """
 from __future__ import annotations
+import os
 import numpy as np
 
 try:
@@ -21,7 +22,7 @@ class Diarizer:
     def __init__(self, cfg: dict):
         self.sr = cfg["audio"]["sample_rate"]
         self.enabled = cfg["diarize"]["enabled"]
-        self._hf_token = cfg["diarize"].get("hf_token") or None
+        self._hf_token = cfg["diarize"].get("hf_token") or os.environ.get("HF_TOKEN") or None
         self.pipeline = None
         self._embed_infer = None  # lazy-initialised in embed()
 
