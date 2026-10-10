@@ -1,0 +1,39 @@
+# envs / caches (keep everything off C:)
+.venv/
+.venv*/
+.cache/
+__pycache__/
+*.py[cod]
+
+# local tool binaries (uv.exe etc. — installed by setup_uv.ps1)
+.tools/
+
+# model weights / downloads
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.safetensors
+
+# audio scratch
+*.wav
+*.flac
+*.mp3
+recordings/
+
+# logs / captured script output
+*.log
+*_output.txt
+setup_uv_log.txt
+
+# local Claude Code settings
+.claude/settings.local.json
+
+# secrets / OS / editor
+.env
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

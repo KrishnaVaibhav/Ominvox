@@ -1,0 +1,36 @@
+# Ominvox — Python deps. Install into the project-local venv (.venv) via setup.bat.
+# GPU: install a CUDA torch build matching your driver (see setup.bat note).
+
+# core
+numpy>=1.26
+pyyaml>=6.0
+soundfile>=0.12
+
+# audio capture (Windows WASAPI loopback)
+PyAudioWPatch>=0.2.12.6 ; sys_platform == "win32"
+
+# NOTE: torch / torchaudio are NOT listed here on purpose.
+# They are installed separately (CUDA build) at the end of setup_conda.bat so a
+# plain-PyPI resolve can't silently replace the GPU build with a CPU one.
+
+# STT
+faster-whisper>=1.0.3
+
+# speaker diarization
+pyannote.audio>=3.1
+
+# translation (arbitrary target languages)
+# Cap <5: coqui-tts 0.27.5 imports transformers.pytorch_utils.isin_mps_friendly,
+# which transformers 5.x removed (upstream declares >=4.57 but forgot the <5 cap).
+transformers>=4.57,<5
+sentencepiece>=0.2
+
+# TTS + voice cloning  (maintained Coqui fork; needs Python <= 3.12)
+coqui-tts>=0.24.0      # XTTS-v2
+
+# UI server
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# optional / low-end alt:
+# openvoice-cli

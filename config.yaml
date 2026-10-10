@@ -1,0 +1,66 @@
+# Ominvox runtime config. Everything stays under D:\GitHub\Ominvox.
+#
+# Detected hardware (2026-06-14):
+#   GPU 0 : NVIDIA GeForce RTX 4070 Laptop GPU - 8 GB VRAM  (CUDA, primary)
+#   GPU 1 : Intel UHD Graphics (integrated, drives display - frees the 4070)
+#   RAM   : 32 GB
+# VRAM budget @ 8 GB:  whisper-medium int8 (~1 GB) + pyannote (~2.5 GB)
+#   + XTTS-v2 (~2.5 GB) ~= 6 GB resident, leaving headroom. Verified via run.bat --check.
+
+paths:
+  cache_dir: ".cache"          # HF/torch/model downloads (kept off C:)
+  speaker_dir: ".cache/speakers"   # cached per-speaker reference clips/embeddings
+
+audio:
+  sample_rate: 16000           # pipeline working rate (STT/diarization)
+  block_ms: 250                # capture chunk size (250ms = 4000 samples > 512 VAD min)
+  channels: 1
+  # null = auto-detect the default speaker's WASAPI loopback. If no audio is
+  # captured (run.bat --audio-test shows SILENCE), set this to the loopback index
+  # from `run.bat --list-devices` that matches the device your movie plays on.
+  input_device_index: null
+
+translate:
+  source_lang: "auto"          # whisper auto-detect
+  target_lang: "en"            # ISO code; e.g. en, es, hi, fr, ja
+
+stt:
+  # RTX 4070 Laptop = 8 GB VRAM, shared with pyannote + XTTS, so 'medium' int8
+  # leaves headroom for all three models resident at once. Bump to 'large-v3'
+  # only if you disable diarization or accept occasional VRAM pressure.
+  model: "medium"              # large-v3 | medium | small (lower = faster, less VRAM)
+  device: "cuda"               # cuda | cpu
+  compute_type: "int8"         # int8 (lightest) | int8_float16 | float16
+
+diarize:
+  enabled: true
+  model: "pyannote/speaker-diarization-3.1"
+  hf_token: ""                 # leave empty; put HF_TOKEN=... in .env (gated model)
+
+mt:
+  backend: "whisper"           # whisper (translate-to-en) | nllb
+  nllb_model: "facebook/nllb-200-distilled-600M"
+
+tts:
+  backend: "xtts"              # xtts | openvoice
+  voice_mode: "match"          # match | preset | single
+  preset_voice: ""             # path to a reference wav when voice_mode != match
+  min_ref_seconds: 6           # audio needed before cloning a new speaker
+
+vad:
+  silence_chunks: 4            # 4 × 250ms = 1.0s silence before flushing (was 5×1000ms=5s)
+  max_segment_s: 8.0           # force-cut an utterance at this length (avoids unbounded buffers)
+
+speaker_id:
+  threshold: 0.75              # cosine similarity floor for voice-profile matching
+  # 0.75 is conservative — same speaker is typically 0.85-0.95, different 0.2-0.6
+
+playback:
+  delay_ms: 1500               # buffer to absorb pipeline jitter (subtitle-style offset)
+  duck_original_db: -12        # how much to lower the original movie audio
+  sample_rate: 24000           # XTTS-v2 native output rate; must match VoiceSynth output
+  # FEEDBACK GUARD: null = play to default output = the device loopback records,
+  # so translated speech gets re-captured and re-translated (echo loop). To break
+  # it, set this to a DIFFERENT output device index (headphones, or a virtual
+  # audio cable). List devices with: run.bat --list-devices
+  output_device_index: null
