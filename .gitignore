@@ -32,8 +32,9 @@ setup_uv_log.txt
 .claude/settings.local.json
 .claude/*
 
-# built launcher + its logs (build_exe.bat)
+# built programs + logs (scripts/build_exe.bat)
 Ominvox.exe
+dist/
 logs/
 
 # settings saved from the app UI

@@ -68,6 +68,8 @@ def load(path: str | os.PathLike | None = None, user_settings: bool = False) -> 
         cfg = yaml.safe_load(f)
     if user_settings:
         _deep_update(cfg, load_user_settings())
+    if cfg.get("tts", {}).get("license_accepted"):
+        os.environ.setdefault("COQUI_TOS_AGREED", "1")   # XTTS asks otherwise
 
     cache_dir = (ROOT / cfg["paths"]["cache_dir"]).resolve()
     _pin_caches(cache_dir)

@@ -70,8 +70,8 @@ def spike(cfg: dict, window_s: float = 5.0, translate: bool = False,
     max_seconds > 0 auto-stops after that long (headless); 0 runs until Ctrl+C."""
     import time
     import numpy as np
-    from .capture import LoopbackCapture
-    from .stt import STT
+    from .audio.capture import LoopbackCapture
+    from .pipeline.stt import STT
 
     sr = cfg["audio"]["sample_rate"]
     s = cfg["stt"]
@@ -81,7 +81,7 @@ def spike(cfg: dict, window_s: float = 5.0, translate: bool = False,
     print("Loading STT model (first run downloads weights into .cache\\whisper)...")
     stt = STT(cfg)
     if stt.model is None:
-        print("FAIL: faster-whisper not available. Run setup_uv.ps1.")
+        print("FAIL: faster-whisper not available. Run setup.ps1.")
         return 1
 
     cap = LoopbackCapture.from_cfg(cfg)
@@ -138,7 +138,7 @@ def spike(cfg: dict, window_s: float = 5.0, translate: bool = False,
 def list_devices() -> int:
     """List ALL input sources (system-audio loopbacks + mics) and outputs, with
     indices for audio.input_device_index / playback.output_device_index."""
-    from .capture import enumerate_devices
+    from .audio.devices import enumerate_devices
     d = enumerate_devices()
     if not d["inputs"] and not d["outputs"]:
         print("No devices found (PyAudioWPatch unavailable or no audio devices).")
@@ -162,7 +162,7 @@ def audio_test(cfg: dict, seconds: float = 10.0) -> int:
     selected device is actually receiving the movie's audio (RMS > 0)."""
     import time
     import numpy as np
-    from .capture import LoopbackCapture
+    from .audio.capture import LoopbackCapture
 
     cap = LoopbackCapture.from_cfg(cfg)
     try:
@@ -243,19 +243,20 @@ def main(argv=None):
         return spike(cfg, window_s=args.spike_window, translate=args.translate,
                      max_seconds=args.spike_seconds)
     if args.window:
-        from .ui import UIServer
-        UIServer(cfg, persist=True).serve_window(host=args.host, port=args.port)
+        from .ui.server import UIServer
+        from .ui.window import run_window
+        run_window(UIServer(cfg, persist=True), host=args.host, port=args.port)
         # Window closed: exit hard so audio/CUDA worker threads can't keep the
         # process (and its VRAM) alive in the background.
         sys.stdout.flush()
         os._exit(0)
     if args.ui:
-        from .ui import UIServer
+        from .ui.server import UIServer
         UIServer(cfg, persist=True).serve(host=args.host, port=args.port,
                                           open_browser=not args.no_browser)
         return 0
 
-    from .orchestrator import Pipeline
+    from .pipeline.orchestrator import Pipeline
     Pipeline(cfg).run()
     return 0
 

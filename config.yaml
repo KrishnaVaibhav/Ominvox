@@ -46,6 +46,10 @@ mt:
 
 tts:
   backend: "xtts"              # xtts | openvoice
+  # XTTS-v2 is under the Coqui Public Model License (non-commercial use only:
+  # https://coqui.ai/cpml). The app asks you to agree on first run; without it
+  # translations are shown as text only.
+  license_accepted: false
   voice_mode: "match"          # match | preset | single
   preset_voice: ""             # path to a reference wav when voice_mode != match
   # Built-in XTTS voice for "single" mode (and when no preset wav is given).

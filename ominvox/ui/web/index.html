@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ominvox</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header>
+  <div class="logo"><div class="logo-glyph">◈</div>OMINVOX</div>
+  <div class="status-chip" id="status-chip"><div class="status-dot"></div><span id="status-label">Stopped</span></div>
+  <div class="lag-pill tabular" id="lag-pill" title="How far the translated voice trails the original speech (last line)">
+    <span class="ov-dot" id="lag-pill-dot"></span>Lag <b id="lag-pill-val">–</b>
+  </div>
+  <div class="hdr-spacer"></div>
+  <button class="btn-primary" id="main-btn">Start Listening</button>
+  <button class="btn-sm" id="setup-btn" title="System check, voice licence, token and downloads">Setup</button>
+  <button class="btn-icon" id="clear-btn" title="Clear transcript">⌫</button>
+  <button class="btn-icon active" id="left-btn" title="Show / hide audio &amp; settings panel">⚙</button>
+  <button class="btn-icon active" id="right-btn" title="Show / hide performance &amp; speakers panel">📊</button>
+</header>
+
+<div class="layout" id="layout">
+  <!-- ── Left: audio + settings ── -->
+  <aside class="sidebar left">
+    <div class="section">
+      <div class="section-title">Audio <span class="grow"></span>
+        <button class="btn-sm" id="refresh-btn" title="Re-scan audio devices (after plugging something in)">↻ Refresh</button>
+      </div>
+
+      <div class="field">
+        <label for="input-sel">Input — what to translate</label>
+        <select id="input-sel"></select>
+        <div class="row">
+          <div class="meter"><div id="level-bar"></div></div>
+          <span class="meter-label tabular" id="level-val">–</span>
+        </div>
+        <div class="row">
+          <button class="btn-sm" id="check-input-btn" title="Listen to this input for 10 s without loading the AI models">Check input</button>
+          <span class="hint" id="input-hint">Pick the device your movie plays on.</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="output-sel">Output — where you hear the translation</label>
+        <select id="output-sel"></select>
+        <div class="row">
+          <button class="btn-sm" id="test-output-btn">Test sound</button>
+          <span class="hint">Plays a short beep.</span>
+        </div>
+      </div>
+
+      <div class="callout" id="echo-warn">
+        <span class="ico">!</span>
+        <span>Input and output are the <b>same device</b>, so the translation will be picked up
+          and translated again. Send the output to headphones or another device
+          (or use a virtual cable — see README section 8).</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Language &amp; voice</div>
+      <div class="field">
+        <label for="src-lang-sel">Movie language</label>
+        <select id="src-lang-sel">
+          <option value="auto">Auto-detect</option>
+          <option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option>
+          <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option>
+          <option value="ru">Russian</option><option value="ja">Japanese</option><option value="zh">Chinese</option>
+          <option value="ko">Korean</option><option value="ar">Arabic</option><option value="hi">Hindi</option>
+          <option value="nl">Dutch</option><option value="pl">Polish</option><option value="tr">Turkish</option>
+          <option value="cs">Czech</option><option value="hu">Hungarian</option><option value="sv">Swedish</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="tgt-lang-sel">Translate into</label>
+        <select id="tgt-lang-sel">
+          <option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option>
+          <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option>
+          <option value="ru">Russian</option><option value="ja">Japanese</option><option value="zh">Chinese</option>
+          <option value="ko">Korean</option><option value="ar">Arabic</option><option value="hi">Hindi</option>
+          <option value="nl">Dutch</option><option value="pl">Polish</option><option value="tr">Turkish</option>
+          <option value="cs">Czech</option><option value="hu">Hungarian</option>
+          <option value="sv">Swedish (text only, no voice)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="voice-mode-sel">Voice</label>
+        <select id="voice-mode-sel">
+          <option value="match">Match each speaker (clone)</option>
+          <option value="preset">Preset voice (wav from config)</option>
+          <option value="single">One voice for everyone</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Video sync</div>
+      <div class="seg" id="sync-seg">
+        <button data-mode="asap">Fastest</button>
+        <button data-mode="fixed">Fixed lag</button>
+      </div>
+      <p class="hint" id="sync-hint" style="margin-top:8px"></p>
+
+      <div id="fixed-box" style="display:none">
+        <div class="field" style="margin-top:12px">
+          <label for="lag-input">Lag behind the original (seconds)</label>
+          <div class="row">
+            <input type="number" id="lag-input" min="0.5" max="30" step="0.1" value="4.0" class="tabular">
+            <button class="btn-sm" id="suggest-btn" disabled title="Use a value most lines can make, from live measurements">Use suggested</button>
+          </div>
+          <span class="hint" id="suggest-hint">Start listening for a few lines to get a suggestion.</span>
+        </div>
+        <div class="sync-box">
+          <div class="hint">Set your video player's <b>audio delay</b> to</div>
+          <div class="big tabular" id="player-delay">−4.000 s</div>
+          <div class="hint">so the translated voice lines up with the picture.</div>
+          <details>
+            <summary>How, in VLC / MPC-HC</summary>
+            <ol>
+              <li><b>VLC:</b> Tools → Track Synchronization → <i>Audio track synchronization</i> = the value above.
+                (Or press <b>J</b> / <b>K</b> to move it in 50 ms steps.)</li>
+              <li><b>MPC-HC / MPC-BE:</b> Options → Internal Filters → Audio Switcher → enable
+                <i>Time shift</i> and enter the value in milliseconds.</li>
+              <li>This works best with the movie's own sound going to a virtual cable (README section 8),
+                so you hear only the translation.</li>
+            </ol>
+          </details>
+        </div>
+      </div>
+
+      <div class="field" id="asap-box" style="margin-top:12px">
+        <label for="delay-input">Extra delay (seconds)</label>
+        <input type="number" id="delay-input" min="0" max="10" step="0.1" value="0" class="tabular">
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Centre: transcripts ── -->
+  <section class="main">
+    <div class="panel">
+      <div class="panel-header"><span>Original</span><span class="lang-badge" id="src-lang">—</span></div>
+      <div class="transcript" id="src-transcript">
+        <div class="empty-state" id="src-empty">
+          <div class="empty-icon">🎙</div>
+          <div>Waiting for audio…</div>
+          <div style="font-size:11px">Pick your input on the left, press <b>Start Listening</b>, then play your movie.</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel-divider"></div>
+    <div class="panel">
+      <div class="panel-header"><span>Translation</span><span class="lang-badge" id="tgt-lang">—</span></div>
+      <div class="transcript" id="tgt-transcript">
+        <div class="empty-state" id="tgt-empty">
+          <div class="empty-icon">🌐</div>
+          <div>Translations appear here, each with its delay.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Right: performance + speakers ── -->
+  <aside class="sidebar right">
+    <div class="tabs">
+      <button class="on" data-tab="perf">Performance</button>
+      <button data-tab="spk">Speakers</button>
+    </div>
+
+    <div class="tab-body" id="tab-perf">
+      <div class="hero">
+        <div class="hero-label">Translation lag <span class="status-tag" id="lag-status"><span class="ov-dot"></span><span>No data</span></span></div>
+        <div class="hero-num tabular" id="lag-hero">–</div>
+        <div class="hint">How far behind the original speech the translated voice starts.</div>
+        <div class="hero-sub tabular">
+          <div>Average<b id="lag-avg">–</b></div>
+          <div>95% of lines<b id="lag-p95">–</b></div>
+          <div>Range<b id="lag-range">–</b></div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="lag-chart" aria-label="Lag per line, last 30 lines"></canvas>
+          <div class="tooltip" id="lag-tip"></div>
+        </div>
+        <div class="legend">
+          <span><i class="swatch line" style="background:var(--series-1)"></i>Lag (voice started)</span>
+          <span><i class="swatch line" style="background:var(--series-2)"></i>Ready (fastest possible)</span>
+          <span id="target-legend" style="display:none"><i class="swatch dash"></i>Fixed lag</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Where the lag comes from <span class="grow"></span><span class="hint" style="text-transform:none;letter-spacing:0">last line</span></div>
+        <div class="stack" id="stage-stack"></div>
+        <table class="stage-table tabular">
+          <thead><tr><th>Stage</th><th>Last</th><th>Average</th></tr></thead>
+          <tbody id="stage-rows"></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Throughput</div>
+        <div class="tiles tabular">
+          <div class="tile" title="Processing time ÷ length of the speech. Below 1.0 keeps up with real time.">
+            <div class="k">Speed (real-time factor)</div><div class="v" id="t-rtf">–</div><div class="s" id="t-rtf-s">below 1.0 keeps up</div></div>
+          <div class="tile" title="From the end of a line of speech until its translation is ready">
+            <div class="k">Response time</div><div class="v" id="t-resp">–</div><div class="s">after speech ends</div></div>
+          <div class="tile" title="Translated audio waiting to be played">
+            <div class="k">Playback backlog</div><div class="v" id="t-backlog">–</div><div class="s" id="t-queue">queue: –</div></div>
+          <div class="tile">
+            <div class="k">Lines</div><div class="v" id="t-lines">0</div><div class="s" id="t-lines-s">–</div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">System</div>
+        <div class="kv"><span>GPU</span><b id="s-gpu">–</b></div>
+        <div class="kv"><span>GPU load</span><b id="s-gpu-util" class="tabular">–</b></div>
+        <div class="bar"><div id="s-gpu-bar"></div></div>
+        <div class="kv" style="margin-top:6px"><span>GPU memory</span><b id="s-vram" class="tabular">–</b></div>
+        <div class="bar"><div id="s-vram-bar"></div></div>
+        <div class="kv" style="margin-top:6px"><span>GPU temperature</span><b id="s-temp" class="tabular">–</b></div>
+        <div class="kv"><span>CPU</span><b id="s-cpu" class="tabular">–</b></div>
+        <div class="kv"><span>App memory</span><b id="s-ram" class="tabular">–</b></div>
+        <div class="kv"><span>Listening on</span><b id="s-in">–</b></div>
+        <div class="kv"><span>Playing to</span><b id="s-out">–</b></div>
+      </div>
+    </div>
+
+    <div class="tab-body" id="tab-spk" hidden>
+      <div class="section">
+        <div class="section-title">Speakers <span class="grow"></span>
+          <button class="btn-sm" id="forget-all-btn" title="Forget every saved speaker (e.g. new movie)">Forget all</button></div>
+        <p class="hint" style="margin-bottom:10px">Rename a speaker to keep their voice across sessions.
+          Give two entries the same name to merge them.</p>
+        <div id="speakers-list"><div class="speakers-empty">No speakers detected yet.</div></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ── First-run setup (setup.js) ── -->
+<div class="modal" id="setup" hidden>
+  <div class="setup-card" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+    <aside class="setup-steps">
+      <div class="setup-brand"><div class="logo-glyph">◈</div><div><b id="setup-title">Set up Ominvox</b><span>About 10 minutes, once</span></div></div>
+      <ol id="setup-step-list">
+        <li data-step="0"><span class="st"></span>Check your PC</li>
+        <li data-step="1"><span class="st"></span>Voice licence</li>
+        <li data-step="2"><span class="st"></span>Speaker separation</li>
+        <li data-step="3"><span class="st"></span>Download models</li>
+      </ol>
+    </aside>
+
+    <section class="setup-body">
+      <!-- 0: system -->
+      <div class="setup-page" data-page="0">
+        <h2>Check your PC</h2>
+        <p class="lead">Ominvox runs entirely on your computer, so it needs an NVIDIA graphics card.</p>
+        <div id="check-list" class="check-list"></div>
+        <button class="btn-sm" id="recheck-btn">Check again</button>
+      </div>
+
+      <!-- 1: licence -->
+      <div class="setup-page" data-page="1" hidden>
+        <h2>Voice licence</h2>
+        <p class="lead">The voice model (<b>XTTS-v2</b>) gives each speaker a matching voice in the new language.
+          It is free under the <b>Coqui Public Model License</b>, which allows <b>non-commercial use only</b>.</p>
+        <ul class="plain">
+          <li>✓ Personal use: watching films, learning, accessibility</li>
+          <li>✗ Selling, or using in a commercial product or service</li>
+        </ul>
+        <div class="row" style="margin-top:14px;gap:8px">
+          <button class="btn-sm apply" id="license-yes">I agree</button>
+          <button class="btn-sm" id="license-no">Not now (text only)</button>
+          <button class="link" data-url="https://coqui.ai/cpml">Read the licence</button>
+        </div>
+        <p class="hint" id="license-state" style="margin-top:10px"></p>
+      </div>
+
+      <!-- 2: token -->
+      <div class="setup-page" data-page="2" hidden>
+        <h2>Speaker separation <span class="tag">optional</span></h2>
+        <p class="lead">Lets Ominvox tell voices apart so each character keeps their own voice.
+          It uses free models that need a Hugging Face account. Skip it and everyone shares one voice.</p>
+        <ol class="howto">
+          <li>Create a free account <button class="link" data-url="https://huggingface.co/join">huggingface.co/join</button></li>
+          <li>While logged in, open both pages and click <b>Agree and access repository</b>:
+            <div class="gated" id="gated-list"></div></li>
+          <li>Create a token of type <b>Read</b> <button class="link" data-url="https://huggingface.co/settings/tokens">huggingface.co/settings/tokens</button>
+            and paste it here:</li>
+        </ol>
+        <div class="row" style="gap:8px">
+          <input type="password" id="token-input" placeholder="hf_…" autocomplete="off" spellcheck="false">
+          <button class="btn-sm apply" id="token-btn">Check &amp; save</button>
+        </div>
+        <p class="token-msg" id="token-msg"></p>
+      </div>
+
+      <!-- 3: downloads -->
+      <div class="setup-page" data-page="3" hidden>
+        <h2>Download models</h2>
+        <p class="lead">One-time download into the Ominvox folder. You can keep using your PC meanwhile.</p>
+        <div id="model-list" class="model-list"></div>
+        <label class="check-row"><input type="checkbox" id="want-translator">
+          Also get the translator for output languages other than English (2.5 GB)</label>
+        <div class="total-row tabular" id="dl-total"></div>
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn-sm apply" id="download-btn">Download</button>
+        </div>
+      </div>
+
+      <footer class="setup-foot">
+        <button class="btn-sm" id="setup-back">Back</button>
+        <span class="grow"></span>
+        <button class="link" id="setup-later">Finish later</button>
+        <button class="btn-sm apply" id="setup-next">Next</button>
+      </footer>
+    </section>
+  </div>
+</div>
+
+<div id="log-strip">Connecting…</div>
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+<script src="/static/setup.js"></script>
+</body>
+</html>
