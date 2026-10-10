@@ -81,10 +81,17 @@ pipe = Pipeline(cfg, log=lambda m: None)
 events: list[dict] = []
 pipe._notify = events.append
 spoken: list[np.ndarray] = []
-pipe.player.submit = spoken.append                   # capture instead of playing
+lines: list[dict] = []
+def _fake_submit(wav, anchor=None, meta=None):      # capture instead of playing
+    spoken.append(wav)
+    pipe._on_play({**(meta or {}), "play_t": meta["ready_t"], "late_s": 0.0,
+                   "out_s": len(wav) / 24000})
+pipe.player.submit = _fake_submit
 
 tts = pipe.synth.tts
 sr = cfg["audio"]["sample_rate"]
+import torch
+torch.manual_seed(1234)            # XTTS samples randomly; keep the test speech reproducible
 
 
 def say(text: str, voice: str) -> np.ndarray:
@@ -111,6 +118,19 @@ for audio, who in order:
     print(f"    {'':>14} [{utt['tgt_lang']}] {utt['translated']}")
     if len(spoken) == n_spoken:
         fail(f"TTS for {who}", "no audio produced")
+
+lm = next((e for e in events if e["type"] == "line_metrics"), None)
+if lm and lm["lag_s"] > 0 and all(k in lm["stages"] for k in ("diarize", "stt", "mt", "tts")):
+    ok("line_metrics reports lag + per-stage timing",
+       f"lag {lm['lag_s']}s, stt {lm['stages']['stt']}ms, tts {lm['stages']['tts']}ms, rtf {lm['rtf']}")
+else:
+    fail("line_metrics", str(lm))
+st = pipe.stats()
+if st["lines_total"] == len(order) and st["lag"]["p95"] and st["suggested_lag_ms"]:
+    ok("stats(): rolling lag + suggestion", f"avg {st['lag']['avg']}s p95 {st['lag']['p95']}s "
+       f"-> suggest {st['suggested_lag_ms']} ms, VRAM {st['system'].get('vram_used_gb')} GB")
+else:
+    fail("stats()", str({k: st.get(k) for k in ('lines_total', 'lag', 'suggested_lag_ms')}))
 
 assigned = {who: next(iter(v)) for who, v in names.items() if len(v) == 1}
 if len(assigned) == len(VOICES) and len(set(assigned.values())) == len(VOICES):

@@ -70,9 +70,10 @@ class VoiceProfileStore:
     """
 
     PROFILES_FILE = "profiles.json"
-    # Measured on WeSpeaker embeddings of real speech (clips >= 2 s): same voice
-    # scored >= 0.71, different voices <= 0.65.
-    DEFAULT_THRESHOLD = 0.68
+    # Tuned by replaying a 4-voice dialogue (incl. two similar female voices)
+    # through resolve(), 7 independent renders: 0.62 gave 0 splits / 1 merge;
+    # 0.60 -> 0/2, 0.64 -> 1/1, 0.66 -> 2/1, 0.68 -> 2+ splits.
+    DEFAULT_THRESHOLD = 0.62
 
     def __init__(self, speaker_dir: Path, threshold: float = DEFAULT_THRESHOLD):
         self.dir = Path(speaker_dir)

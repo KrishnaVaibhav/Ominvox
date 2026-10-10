@@ -2,6 +2,7 @@
 --check runs a dependency/self-test without needing models or audio."""
 from __future__ import annotations
 import argparse
+import os
 import sys
 
 from . import config
@@ -223,9 +224,12 @@ def main(argv=None):
     p.add_argument("--host", default="127.0.0.1", help="UI server host (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8765, help="UI server port (default 8765)")
     p.add_argument("--no-browser", action="store_true", help="don't open browser on UI start")
+    p.add_argument("--window", action="store_true",
+                   help="start the UI in its own app window (what Ominvox.exe runs)")
     args = p.parse_args(argv)
 
-    cfg = config.load(args.config)
+    # The UI remembers choices made in it (user_settings.json); CLI modes don't.
+    cfg = config.load(args.config, user_settings=args.ui or args.window)
     if args.target:
         cfg["translate"]["target_lang"] = args.target
 
@@ -238,10 +242,17 @@ def main(argv=None):
     if args.spike:
         return spike(cfg, window_s=args.spike_window, translate=args.translate,
                      max_seconds=args.spike_seconds)
+    if args.window:
+        from .ui import UIServer
+        UIServer(cfg, persist=True).serve_window(host=args.host, port=args.port)
+        # Window closed: exit hard so audio/CUDA worker threads can't keep the
+        # process (and its VRAM) alive in the background.
+        sys.stdout.flush()
+        os._exit(0)
     if args.ui:
         from .ui import UIServer
-        UIServer(cfg).serve(host=args.host, port=args.port,
-                            open_browser=not args.no_browser)
+        UIServer(cfg, persist=True).serve(host=args.host, port=args.port,
+                                          open_browser=not args.no_browser)
         return 0
 
     from .orchestrator import Pipeline

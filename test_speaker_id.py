@@ -496,12 +496,17 @@ async def ws_rename_round_trip():
             "name": "Alice",
         }))
 
-        # Expect a speakers update back
-        try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=3)
-            results["rename_reply"] = json.loads(raw)
-        except asyncio.TimeoutError:
-            results["rename_reply"] = None
+        # Expect a speakers update back (skip the periodic stats/level frames)
+        results["rename_reply"] = None
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            try:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=1))
+            except asyncio.TimeoutError:
+                continue
+            if msg.get("type") == "speakers":
+                results["rename_reply"] = msg
+                break
 
     server_task.cancel()
     return results

@@ -10,8 +10,11 @@ WASAPI loopback, so you may hear a short beep. Checks:
   6. Player rejects a bad output device with a clear error
 
 Run:  .venv312\\Scripts\\python.exe test_audio_devices.py
+Set OMINVOX_TEST_DEVICE=<part of a device name> to test that device instead of
+the default (e.g. so the beep doesn't go into headphones you're wearing).
 """
 from __future__ import annotations
+import os
 import sys
 import threading
 import time
@@ -36,13 +39,24 @@ def fail(name, reason):
     FAIL.append(name)
 
 
+def device_by_name(kind: str, env: str):
+    """Index of the device whose name contains $env (None = system default)."""
+    want = os.environ.get(env, "").lower()
+    if not want:
+        return None
+    from ominvox.capture import enumerate_devices
+    devs = enumerate_devices()
+    pool = [d for d in devs["inputs"] if d["kind"] == "system"] if kind == "input" else devs["outputs"]
+    return next((d["index"] for d in pool if want in d["name"].lower()), None)
+
+
 def n_capture_threads() -> int:
     return sum(1 for t in threading.enumerate() if t.name == "capture" and t.is_alive())
 
 
 cfg = config.load()
-cfg["audio"]["input_device_index"] = None          # default speaker's loopback
-cfg["playback"]["output_device_index"] = None      # default speaker
+cfg["audio"]["input_device_index"] = device_by_name("input", "OMINVOX_TEST_DEVICE")
+cfg["playback"]["output_device_index"] = device_by_name("output", "OMINVOX_TEST_DEVICE")
 cfg["playback"]["delay_ms"] = 0
 
 devs = enumerate_devices()
@@ -116,6 +130,20 @@ try:
     fail("bad input device", "start() did not raise")
 except RuntimeError as e:
     ok("bad input device fails fast with a clear error", f"{time.time()-t0:.2f}s: {str(e)[:60]}")
+
+# 6b. every output device opens (WASAPI only accepts its native rate/channels)
+bad_outs = []
+for d in devs["outputs"]:
+    c = dict(cfg)
+    c["playback"] = dict(cfg["playback"], output_device_index=d["index"])
+    pl = Player(c)
+    try:
+        pl.start()
+        pl.stop()
+    except Exception as e:
+        bad_outs.append(f"{d['name']}: {e}")
+(ok if not bad_outs else fail)("every output device opens",
+                               "; ".join(bad_outs) or f"{len(devs['outputs'])} devices")
 
 # 6. bad output device
 cfg_bad = dict(cfg)

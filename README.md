@@ -16,6 +16,7 @@ Everything runs on your own computer: no cloud service, no subscription. The pro
 6. [Run the setup](#6-run-the-setup)
 7. [Start Ominvox](#7-start-ominvox)
 8. [Avoid the echo problem (important)](#8-avoid-the-echo-problem-important)
+   - [Sync the translation with your video](#sync-the-translation-with-your-video)
 9. [Settings (config.yaml)](#9-settings-configyaml)
 10. [Troubleshooting](#10-troubleshooting)
 11. [For developers](#11-for-developers)
@@ -132,6 +133,8 @@ This step downloads Python, the AI libraries, and GPU support. It takes **10–3
 
    The self-test should show `ok` next to every package and `torch.cuda.is_available: True`.
 
+   At the end, setup also builds **`Ominvox.exe`** in the project folder and puts an **Ominvox shortcut on your desktop**.
+
 If it ends with a red error instead, see [Troubleshooting](#10-troubleshooting).
 
 **Alternative:** if you already use Anaconda or Miniconda, you can run `setup_conda.bat` instead of steps 3 and 4 above. It builds the same environment.
@@ -140,37 +143,80 @@ If it ends with a red error instead, see [Troubleshooting](#10-troubleshooting).
 
 ## 7. Start Ominvox
 
-### The easy way: web interface
+### Open the app
 
-1. Double-click **`start_ui.bat`** in the project folder.
-2. A window opens and your web browser opens <http://127.0.0.1:8765>. If the browser doesn't open, type that address in yourself.
-3. **First start only:** the AI models download, about 5 GB. This can take several minutes. Later starts are much faster.
-4. In the web page:
-   - Choose the **Input Source** at the top: the speakers or headphones your movie plays on.
-   - Open **Settings** (⚙) and choose the **Source Language** (or Auto-detect), the **Target Language**, the **Voice Mode** and the **Output Source** (where you hear the translation; see [section 8](#8-avoid-the-echo-problem-important)). Then click **Apply**.
-   - Click **Start Listening**.
-5. Play your movie. The level bar turns green when sound is detected, the transcript appears, and the translated voice plays after a short delay (1.5 seconds by default).
-6. Click the 👥 button to see the detected speakers:
-   - **Rename** a speaker (for example "Unknown 2" to "Captain"). Names are remembered, so the same voice gets the same name next time.
-   - If one person shows up twice, rename the second entry to the **same name** as the first to merge them.
-   - **Forget all** (click twice to confirm) clears every saved speaker. Use it when you switch to a different movie.
-7. To stop, click **Stop**, then close the black window.
+Double-click the **Ominvox** shortcut on your desktop (or `Ominvox.exe` in the project folder). Ominvox opens in its own window.
+
+- If setup hasn't been run yet, `Ominvox.exe` offers to run it for you.
+- If your Hugging Face token is missing, it offers to open the token page and your `.env` file.
+- Prefer a browser tab? Double-click `start_ui.bat` instead (it opens <http://127.0.0.1:8765>).
+- If something goes wrong at start-up, the error and the log file location (`logs\ominvox.log`) are shown.
+
+The window has three columns.
+
+### Left: Audio, language and sync
+
+| Control | What it does |
+|---|---|
+| **Input** | Where the sound to translate comes from. Under *Computer sound* pick the speakers or headphones **your movie plays on**; under *Microphones* pick a mic to translate a live speaker. *Automatic* uses your default speakers. |
+| **Check input** | Listens to the chosen input for 10 seconds **without loading the AI models**. Play something: the level bar turns green if sound is arriving. |
+| **Output** | Where you hear the translation. |
+| **Test sound** | Plays a short beep on the chosen output. |
+| **↻ Refresh** | Re-scans devices after you plug something in. |
+| Yellow warning | Appears when input and output are the same device. See [section 8](#8-avoid-the-echo-problem-important). |
+| **Movie language / Translate into / Voice** | Change any time, even while listening. |
+| **Video sync** | *Fastest* or *Fixed lag*. See [Sync the translation with your video](#sync-the-translation-with-your-video). |
+
+Every choice is saved and restored the next time you open Ominvox. Devices are remembered by name, so plugging hardware in or out doesn't mix them up.
+
+### Middle: the transcript
+
+Press **Start Listening**, then play your movie.
+
+- **First start:** the AI models load and warm up. This takes 15–60 seconds, plus a one-time download of about 5 GB the very first time.
+- Each line shows **who spoke** on the left and the **translation** on the right.
+- Every translation is tagged with its delay, for example `voice +5.6 s`. Hover over the tag to see where the time went.
+
+### Right: Performance and Speakers
+
+**Performance** shows the live numbers:
+
+| Item | Meaning |
+|---|---|
+| **Translation lag** | How long after the original line **starts** the translated voice starts. Green under 3 s, yellow under 5 s, orange under 8 s, red above. The header shows the same number. |
+| **Average / 95% of lines / Range** | Over the last 30 lines. |
+| **Lag chart** | Blue = when each line was actually spoken. Orange = when it was ready, the fastest possible. Dashed = your fixed lag, in Fixed mode. |
+| **Where the lag comes from** | The last line's lag, split into its parts. These always add up to the lag: the person speaking (whole sentences are translated), the end-of-sentence pause (about 1 s of silence), waiting for the GPU, speaker ID, speech-to-text, translation, voice, and playback wait. |
+| **Speed (real-time factor)** | Processing time ÷ length of speech. **Below 1.0 the app keeps up**; above 1.0 it falls behind. |
+| **Response time** | From the end of a sentence to its translation being ready. |
+| **Playback backlog / queue** | Translated audio still waiting to play, and lines waiting for the GPU. Growing numbers mean it can't keep up. |
+| **Lines** | Translated, spoken, late (Fixed mode), dropped and errors. |
+| **System** | GPU load, GPU memory, GPU temperature, CPU and memory, and the devices in use. |
+
+**Speakers** lists the detected voices:
+- **Rename** a speaker (for example "Unknown 2" to "Captain"). Names are remembered, so the same voice gets the same name next time.
+- If one person shows up twice, rename the second entry to the **same name** as the first to merge them.
+- **Forget all** (click twice to confirm) clears every saved speaker. Use it when you switch to a different movie.
+
+To stop, click **Stop**. To quit, close the window.
 
 **Voice modes:**
-- **Match Speaker (clone):** each speaker gets a voice that imitates them. Cloning starts after about 6 seconds of their speech; until then their lines use a built-in voice, chosen per speaker so people still sound different.
-- **Preset Voice:** one voice cloned from a `.wav` file you choose (`tts: preset_voice` in `config.yaml`).
-- **Single Voice:** one built-in voice for everyone.
+- **Match each speaker (clone):** each speaker gets a voice that imitates them. Cloning starts after about 6 seconds of their speech; until then their lines use a built-in voice, chosen per speaker so people still sound different.
+- **Preset voice:** one voice cloned from a `.wav` file you choose (`tts: preset_voice` in `config.yaml`).
+- **One voice for everyone:** one built-in voice.
 
-> **Languages:** you can switch the target language at any time in Settings, even while listening.
+> **Languages:** you can switch the target language at any time, even while listening.
 > - **English** uses Whisper's built-in translation (fastest).
-> - **Any other language** uses the NLLB translator. The first time you pick one, about 2.5 GB downloads, so the first line takes a moment.
+> - **Any other language** uses the NLLB translator. The first time you pick one, about 2.5 GB downloads. After that it loads in a few seconds.
 > - The voice can speak English, Spanish, French, German, Italian, Portuguese, Polish, Turkish, Russian, Dutch, Czech, Arabic, Chinese, Hungarian, Korean, Japanese and Hindi. Other languages (such as Swedish) show the translated **text only**.
 
 ### Helper scripts (double-click)
 
 | File | What it does |
 |---|---|
-| `start_ui.bat` | Starts the web interface (the normal way to use Ominvox). |
+| `Ominvox.exe` | Opens the app in its own window (the normal way to use Ominvox). |
+| `start_ui.bat` | Opens the same interface in your web browser instead. |
+| `build_exe.bat` | Rebuilds `Ominvox.exe` (setup already does this). |
 | `audiotest.bat` | Play something, then run this. It records 15 seconds and shows whether sound is being captured. Results are saved to `audiotest_output.txt`. |
 | `devices.bat` | Lists all your audio devices with their numbers, saved to `devices_output.txt`. Useful for `config.yaml`. |
 | `check.bat` | Runs the self-test, saved to `check_output.txt`. |
@@ -181,7 +227,8 @@ If it ends with a red error instead, see [Troubleshooting](#10-troubleshooting).
 Open a terminal in the project folder and run:
 
 ```bat
-run.bat --ui                 REM web interface (same as start_ui.bat)
+run.bat --window             REM app window (what Ominvox.exe runs)
+run.bat --ui                 REM web interface in the browser (same as start_ui.bat)
 run.bat --check              REM self-test
 run.bat --list-devices       REM show audio devices
 run.bat --audio-test         REM check that sound is being captured
@@ -206,6 +253,24 @@ Pick one of these fixes:
 
 You'll then hear only the translation in your headphones, with no echo.
 
+### Sync the translation with your video
+
+Translation can't start until a sentence is finished, so the translated voice always comes a few seconds after the original. You can't remove that delay, but you can **make it constant and shift the video to match**:
+
+1. Start listening and play the movie for about a minute. In the **Video sync** box, choose **Fixed lag**.
+2. Click **Use X.X s**. This is a lag that about 95% of lines can make, based on live measurements. Every line is now spoken exactly that long after the original. Lines that miss it are marked *late* and counted in **Lines**.
+3. The box shows the value to enter in your video player, for example **−7.000 s (−7000 ms)**. Set your player's **audio delay** to that value:
+   - **VLC:** Tools → Track Synchronization → *Audio track synchronization*. You can also press **J** / **K** to move it in 50 ms steps.
+   - **MPC-HC / MPC-BE:** Options → Internal Filters → Audio Switcher → enable *Time shift* and enter the milliseconds.
+
+The player now sends the movie's sound early, Ominvox translates it, and the translated voice arrives in step with the picture. This works best with Fix 2 above (a virtual cable), so you hear only the translation.
+
+**Keeping the lag low:**
+- Lag is mostly **sentence length** plus about 1 s of pause detection. "Where the lag comes from" shows this.
+- A smaller `stt: model` (for example `small`) speeds up speech-to-text.
+- English output is fastest, because it skips the separate translator.
+- Lower `vad: silence_chunks` in `config.yaml` (default 4 × 0.25 s) to detect sentence ends sooner, at the cost of splitting sentences more often.
+
 ---
 
 ## 9. Settings (config.yaml)
@@ -223,11 +288,15 @@ Most things can be changed in the web interface. For anything else, open **`conf
 | `tts: voice_mode` | Voice style | `match`, `preset`, `single` |
 | `tts: preset_voice` | Path to a `.wav` voice sample (10–30 s of clear speech) for preset mode | `D:\voices\me.wav` |
 | `tts: fallback_voice` | Built-in voice for single mode | `Claribel Dervla`, `Damien Black`, `Ana Florence`, `Andrew Chipper` |
-| `speaker_id: threshold` | How similar two lines must sound to count as the same person. Raise it if different people get merged; lower it if one person gets split. | `0.68` (default), `0.6`–`0.8` |
+| `speaker_id: threshold` | How similar two lines must sound to count as the same person. Raise it if different people get merged; lower it if one person gets split. | `0.62` (default), `0.55`–`0.75` |
 | `speaker_id: min_seconds` | Lines with less speech than this (like "No.") are given to the closest known speaker instead of creating a new one | `1.6` |
-| `playback: delay_ms` | Delay before translated speech plays | `1500` (1.5 s) |
-| `audio: input_device_index` | Fixed capture device number (from `devices.bat`). `null` means automatic. | `null`, `34` |
-| `playback: output_device_index` | Fixed playback device number. `null` means default. | `null`, `5` |
+| `playback: sync_mode` | `asap` speaks each line as soon as it's ready; `fixed` keeps a constant lag for syncing with the video | `asap` (default), `fixed` |
+| `playback: fixed_lag_ms` | The constant lag in `fixed` mode | `4000`–`10000` |
+| `playback: delay_ms` | Extra wait in `asap` mode | `0` (default) |
+| `audio: input_device_index` | Fixed capture device number (from `devices.bat`). `null` means automatic. | `null`, `26` |
+| `playback: output_device_index` | Fixed playback device number. `null` means default. | `null`, `19` |
+
+Choices made in the app are saved to **`user_settings.json`** and override `config.yaml`. Delete that file to go back to the `config.yaml` values.
 
 **Leave `diarize: hf_token` empty.** The token belongs in `.env` (see [section 5](#5-create-your-env-file)).
 
@@ -250,7 +319,10 @@ Most things can be changed in the web interface. For anything else, open **`conf
 | Output is English even though another language was chosen | Make sure `mt: backend` in `config.yaml` is `auto` (not `whisper`). |
 | Message "Speaker separation is OFF" | Your Hugging Face token is missing or the model terms weren't accepted. Everything else still works, but everyone shares one voice. Redo [steps 4–5](#4-get-a-free-hugging-face-token). |
 | One person appears as several "Unknown" speakers | Rename the extra entries to the same name to merge them, or lower `speaker_id: threshold` slightly. |
-| "Audio input failed" / "Audio output failed" | The chosen device is unplugged or in use. Pick another one in Settings, or choose Auto. |
+| "Audio input failed" / "Audio output failed" | The chosen device is unplugged or in use. Pick another one, or choose Automatic. Click **↻ Refresh** after plugging devices in. |
+| The lag is high | Open **Where the lag comes from**. If *Person speaking* is the biggest part, that's sentence length and can't be avoided (use Fixed lag to sync instead). If *Speech-to-text* or *Voice* is large, or Speed is above 1.0, use a smaller `stt: model` or close other GPU programs. |
+| Many lines marked *late* in Fixed lag mode | Click **Use X.X s** again, or raise the lag by 0.5–1 s. |
+| Nothing happens when opening `Ominvox.exe` | Look at `logs\ominvox.log` in the project folder. `Ominvox.exe` must stay in the project folder. |
 | "Port 8765 in use" | Ominvox automatically tries ports 8765–8784. Read the black window to see which port it chose, or close the other Ominvox window. |
 | Out of memory / CUDA OOM | Use a smaller `stt: model` (`small`), or close games and other GPU-heavy apps. |
 | Web page shows old behaviour after an update | Close the black window and start `start_ui.bat` again. |
@@ -283,8 +355,12 @@ ominvox\              pipeline package
   player.py           delay-buffered playback
   orchestrator.py     wires the stages together
   ui.py               FastAPI web UI (embedded HTML/JS)
-  config.py           loads config.yaml + .env, pins caches into .cache
-  app.py              CLI entry point
+  config.py           loads config.yaml + user_settings.json + .env, pins caches
+  metrics.py          per-line latency breakdown, rolling stats, GPU/CPU stats
+  web/index.html      the interface (served by ui.py; no build step)
+  app.py              CLI entry point (--ui, --window, --check, ...)
+launcher/             Ominvox.exe source (stdlib only) + icon generator
+build_exe.bat         builds Ominvox.exe with PyInstaller (requirements-build.txt)
 config.yaml           all settings
 .env.example          template for .env (HF_TOKEN)
 requirements.txt      Python deps (torch installed separately, CUDA build)
@@ -305,6 +381,10 @@ test_*.py             tests (see below)
 - **Speaker identity comes from the voice embedding, not the pyannote label.** Each utterance is diarized on its own, so its dominant label is nearly always `SPEAKER_00`; `VoiceProfileStore.resolve()` matches the WeSpeaker embedding against profile centroids instead. Clips with less than `speaker_id.min_seconds` of voiced audio (`orchestrator.voiced_seconds`) are matched but never enrolled (their embeddings are unreliable).
 - Capture uses PortAudio **callback** mode: a WASAPI loopback delivers no data while nothing plays, so a blocking `read()` would hang. `chunks()` yields `None` when no audio arrives, which the segmenter treats as silence.
 - Target/source language and voice mode are read live from the shared config dict, so UI changes apply without rebuilding the pipeline.
+- **Latency:** capture chunks carry monotonic timestamps; each line records speech start/end, queue, per-stage and playback times (`metrics.py`). `lag = play_t - seg_start`, and the eight parts in `metrics.STAGES` sum to it exactly. In `fixed` sync mode the player schedules each clip at `seg_start + fixed_lag`.
+- Device lists are **WASAPI only**: one entry per device with full names, and the same API loopback uses. WASAPI shared mode only accepts the device's native rate and channels, so the player resamples the 24 kHz TTS audio (`scipy.signal.resample_poly`).
+- Models are warmed up once after loading (`Pipeline._warmup`), so the first line isn't slower than the rest.
+- `Ominvox.exe` is a stdlib-only launcher (about 9 MB). It runs `.venv312\Scripts\pythonw.exe -m ominvox.app --window`, which shows the UI in an Edge WebView2 window via pywebview. A second launch reuses a running instance (`/api/health`) so the models are never loaded twice.
 - Every stage degrades gracefully if its model or dependency is missing, so `--check` and partial runs work before all models are installed.
 - See `Ominvox_Project_Plan.md` for the roadmap, latency strategy and risks.
 
@@ -312,6 +392,7 @@ test_*.py             tests (see below)
 
 ```bat
 REM unit / synthetic (no sound)
+.venv312\Scripts\python.exe test_metrics.py
 .venv312\Scripts\python.exe test_pipeline.py
 .venv312\Scripts\python.exe test_speaker_id.py
 .venv312\Scripts\python.exe test_e2e.py
@@ -321,6 +402,9 @@ REM real speech generated with XTTS, full chain without audio devices
 REM these PLAY SOUND on your default speaker
 .venv312\Scripts\python.exe test_audio_devices.py
 .venv312\Scripts\python.exe test_live_ui.py
+REM ...or on chosen devices (part of the name), e.g. to keep it out of headphones:
+set OMINVOX_TEST_DEVICE=LG ULTRAGEAR
+set OMINVOX_TEST_OUTPUT=Realtek
 ```
 
 ### Licenses

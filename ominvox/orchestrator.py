@@ -11,6 +11,7 @@ This means accumulation and GPU processing overlap, and STT sees full utterances
 (much better quality than per-chunk 1-s windows).
 """
 from __future__ import annotations
+import itertools
 import queue
 import threading
 import time
@@ -24,6 +25,7 @@ from .mt import Translator
 from .voices import VoiceSynth
 from .player import Player
 from .speaker_id import VoiceProfileStore
+from .metrics import Metrics
 
 
 def voiced_seconds(audio: np.ndarray, sr: int) -> float:
@@ -58,9 +60,13 @@ class Pipeline:
         self.mt = Translator(cfg)
         log("Loading TTS (XTTS-v2)…")
         self.synth = VoiceSynth(cfg)
-        self.player = Player(cfg)
+        self.metrics = Metrics()
+        self._warmup()
+        self.player = Player(cfg, on_play=self._on_play)
+        self._ids = itertools.count(1)
         log("Pipeline ready — play your movie.")
-        self._seg_q: queue.Queue[np.ndarray] = queue.Queue(maxsize=8)
+        # (audio, timing) pairs; timing holds monotonic seg_start / speech_end / flush_t
+        self._seg_q: queue.Queue[tuple[np.ndarray, dict]] = queue.Queue(maxsize=8)
         self._done = threading.Event()
         # Restartable listening state. Models above stay loaded across start/stop
         # so toggling Listen does NOT reload Whisper/pyannote/XTTS or re-grab VRAM.
@@ -81,19 +87,44 @@ class Pipeline:
         # embeddings (measured: one-word lines have <= 1.45 s of voiced audio).
         self._min_id_seconds = float(sid_cfg.get("min_seconds", 1.6))
 
+    def _warmup(self):
+        """Run every model once so the first real line isn't slowed by CUDA kernel
+        compilation / lazy loading (measured: first line 13.5 s vs ~5.5 s after)."""
+        self.log("Warming up models…")
+        sr = self.cfg["audio"]["sample_rate"]
+        noise = (np.random.default_rng(0).standard_normal(sr * 2) * 0.01).astype(np.float32)
+        for name, fn in (
+            ("speaker ID", lambda: self.diar.label_and_embed(noise)),
+            ("speech-to-text", lambda: self.stt.transcribe(noise)),
+            ("translation", lambda: self.mt.translate_ex("Hello there.", "en")
+                if not self.mt.whisper_handles() else None),
+            ("voice", lambda: self.synth.speak("Hello there.", "__warmup__")),
+        ):
+            try:
+                fn()
+            except Exception as exc:
+                self.log(f"Warm-up of {name} failed ({exc}) - continuing.")
+
     # ------------------------------------------------------------------
     # Segment accumulator (runs in main thread)
     # ------------------------------------------------------------------
 
     def _build_segments(self):
-        """Group VAD-gated chunks into utterances and put them in _seg_q."""
+        """Group VAD-gated chunks into utterances and put them in _seg_q.
+        Tracks when each utterance's speech started/ended (capture timestamps)."""
         sr = self.cfg["audio"]["sample_rate"]
         max_samples = int(self._max_seg_s * sr)
         buf: list[np.ndarray] = []
         buf_len = 0   # running sample count — avoids O(n) sum() every chunk
         silence_run = 0
+        seg_start = speech_end = 0.0
 
-        for chunk in self.capture.chunks():
+        def flush():
+            nonlocal buf, buf_len, silence_run
+            self._flush(buf, {"seg_start": seg_start, "speech_end": speech_end})
+            buf, buf_len, silence_run = [], 0, 0
+
+        for t_end, chunk in self.capture.chunks(with_time=True):
             if self._done.is_set():
                 break
 
@@ -103,39 +134,36 @@ class Pipeline:
                 if buf:
                     silence_run += 1
                     if silence_run >= self._silence_thresh:
-                        self._flush(buf)
-                        buf = []
-                        buf_len = 0
-                        silence_run = 0
+                        flush()
                 continue
 
             if self.vad.is_speech(chunk):
+                if not buf:
+                    seg_start = t_end - len(chunk) / sr
+                speech_end = t_end
                 buf.append(chunk)
                 buf_len += len(chunk)
                 silence_run = 0
                 if buf_len >= max_samples:
-                    self._flush(buf)
-                    buf = []
-                    buf_len = 0
-                    silence_run = 0
+                    flush()
             else:
                 if buf:
                     silence_run += 1
                     buf.append(chunk)
                     buf_len += len(chunk)
                     if silence_run >= self._silence_thresh:
-                        self._flush(buf)
-                        buf = []
-                        buf_len = 0
-                        silence_run = 0
+                        flush()
                 # If no speech buffered yet, skip silent chunks entirely
 
-    def _flush(self, chunks: list[np.ndarray]):
+    def _flush(self, chunks: list[np.ndarray], timing: dict | None = None):
         audio = np.concatenate(chunks)
+        timing = dict(timing or {})
+        timing["flush_t"] = time.monotonic()
         try:
-            self._seg_q.put(audio, timeout=2.0)
+            self._seg_q.put((audio, timing), timeout=2.0)
         except queue.Full:
-            pass  # drop on sustained backpressure to avoid falling ever further behind
+            # drop on sustained backpressure to avoid falling ever further behind
+            self.metrics.count("segments_dropped")
 
     # ------------------------------------------------------------------
     # GPU worker (separate thread)
@@ -145,7 +173,7 @@ class Pipeline:
         """Drain _seg_q: diarize -> speaker-ID -> STT -> MT -> TTS -> player."""
         while not self._done.is_set():
             try:
-                audio = self._seg_q.get(timeout=0.5)
+                audio, timing = self._seg_q.get(timeout=0.5)
             except queue.Empty:
                 continue
 
@@ -153,28 +181,46 @@ class Pipeline:
             # exception here used to stop ALL further processing (the pipeline
             # would "go deaf" after the first hiccup). Catch, log, keep going.
             try:
-                self._process_utterance(audio)
+                self._process_utterance(audio, timing)
             except Exception as exc:
+                self.metrics.count("errors")
                 self.log(f"[worker] skipped an utterance ({type(exc).__name__}: {exc})")
                 continue
 
-    def _process_utterance(self, audio: np.ndarray):
+    def _process_utterance(self, audio: np.ndarray, timing: dict | None = None):
+        sr = self.cfg["audio"]["sample_rate"]
+        now = time.monotonic
+        t0 = now()
+        line = {"audio_s": len(audio) / sr, "work_t": t0}
+        # Without capture timestamps (tests / direct calls) treat "now" as the start.
+        line["seg_start"] = (timing or {}).get("seg_start") or t0 - len(audio) / sr
+        line["speech_end"] = (timing or {}).get("speech_end") or t0
+        line["flush_t"] = (timing or {}).get("flush_t", t0)
+        line["queue"] = t0 - line["flush_t"]
+
         pyannote_label, embedding = self.diar.label_and_embed(audio)
         display_name = self.profiles.resolve(
             pyannote_label, embedding,
-            reliable=voiced_seconds(audio, self.cfg["audio"]["sample_rate"]) >= self._min_id_seconds)
-
+            reliable=voiced_seconds(audio, sr) >= self._min_id_seconds)
         # TTS voice cloning keyed on display name so named speakers share a voice
         self.synth.registry.add_audio(display_name, audio)
+        t1 = now(); line["diarize"] = t1 - t0
 
         text, src = self.stt.transcribe(audio, translate_to_en=self.mt.whisper_handles())
+        t2 = now(); line["stt"] = t2 - t1
         if not text:
+            self.metrics.count("lines_empty")
             return
 
         translated, tgt = self.mt.translate_ex(text, src)
+        t3 = now(); line["mt"] = t3 - t2
+
+        line_id = next(self._ids)
+        line.update(id=line_id, speaker=display_name)
         self.log(f"[{display_name}] {src}->{tgt}: {translated}")
         self._notify({
             "type": "utterance",
+            "id": line_id,
             "speaker": display_name,
             "speaker_id": pyannote_label,
             "src_lang": src,
@@ -183,17 +229,39 @@ class Pipeline:
             "translated": translated,
         })
         # Broadcast updated speaker roster after each utterance
-        self._notify({
-            "type": "speakers",
-            "speakers": {
-                name: info
-                for name, info in self.profiles.list_profiles().items()
-            },
-        })
+        self._notify({"type": "speakers", "speakers": self.profiles.list_profiles()})
 
         wav = self.synth.speak(translated, display_name, language=tgt)
-        if wav is not None:
-            self.player.submit(wav)
+        t4 = now(); line["tts"] = t4 - t3
+        line["ready_t"] = t4
+        if wav is None:
+            self._emit_line(line)          # text only: no playback to wait for
+        else:
+            self.player.submit(wav, anchor=line["seg_start"], meta=line)
+
+    def _on_play(self, line: dict):
+        """Player callback: the translated line just started playing."""
+        self._emit_line(line)
+
+    def _emit_line(self, line: dict):
+        summary = self.metrics.record(line)
+        self._notify({"type": "line_metrics", **summary})
+
+    def stats(self) -> dict:
+        """Snapshot for the UI performance panel (called ~1x per second)."""
+        return {
+            "type": "stats",
+            **self.metrics.rolling(),
+            "system": self.metrics.system(),
+            "queue_depth": self._seg_q.qsize(),
+            "backlog_s": round(self.player.backlog_seconds(), 2),
+            "sync_mode": self.player.sync_mode,
+            "fixed_lag_ms": int(self.player.fixed_lag * 1000),
+            "input_device": self.capture.device_name,
+            "output_device": self.player.device_name,
+            "input_dropped": self.capture.dropped_chunks,
+            "listening": self._listening,
+        }
 
     # ------------------------------------------------------------------
     # Speaker management (called from the UI thread)
@@ -226,6 +294,7 @@ class Pipeline:
         except queue.Empty:
             pass
 
+        self.metrics.reset()
         self.capture.start()          # raises if the input device won't open
         try:
             self.player.start()       # raises if the output device won't open

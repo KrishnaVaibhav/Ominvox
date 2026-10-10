@@ -6,6 +6,8 @@ and must push transcript + translation events back to the browser socket.
 You will hear the test speech and its Spanish translation.
 
 Run:  .venv312\\Scripts\\python.exe test_live_ui.py
+Optional: OMINVOX_TEST_DEVICE=<name part> plays + captures the "movie" on that
+device, OMINVOX_TEST_OUTPUT=<name part> sends the translation there.
 """
 from __future__ import annotations
 import asyncio
@@ -34,6 +36,17 @@ PASS: list[str] = []
 FAIL: list[str] = []
 
 
+def device_by_name(kind: str, env: str):
+    """Index of the device whose name contains $env (None = system default)."""
+    want = os.environ.get(env, "").lower()
+    if not want:
+        return None
+    from ominvox.capture import enumerate_devices
+    devs = enumerate_devices()
+    pool = [d for d in devs["inputs"] if d["kind"] == "system"] if kind == "input" else devs["outputs"]
+    return next((d["index"] for d in pool if want in d["name"].lower()), None)
+
+
 def ok(name, detail=""):
     print(f"  PASS  {name}" + (f"  [{detail}]" if detail else ""))
     PASS.append(name)
@@ -46,8 +59,9 @@ def fail(name, reason):
 
 cfg = copy.deepcopy(config.load())
 cfg["_speaker_dir"] = Path(tempfile.mkdtemp())
-cfg["audio"]["input_device_index"] = None
-cfg["playback"]["output_device_index"] = None
+cfg["audio"]["input_device_index"] = device_by_name("input", "OMINVOX_TEST_DEVICE")
+cfg["playback"]["output_device_index"] = device_by_name("output", "OMINVOX_TEST_OUTPUT")
+MOVIE_OUT = device_by_name("output", "OMINVOX_TEST_DEVICE")
 cfg["translate"]["target_lang"] = "es"
 cfg["mt"]["backend"] = "auto"
 
@@ -70,7 +84,7 @@ def play_speech():
     wav = np.asarray(tts.tts(text=SENTENCE, speaker="Damien Black", language="en"),
                      dtype=np.float32)
     pcfg = copy.deepcopy(cfg)
-    pcfg["playback"]["delay_ms"] = 0
+    pcfg["playback"].update(delay_ms=0, sync_mode="asap", output_device_index=MOVIE_OUT)
     p = Player(pcfg)
     p.start()
     p.submit(np.concatenate([wav, np.zeros(24000, np.float32)]))
@@ -84,7 +98,7 @@ async def main():
         (ok if init["state"] == "stopped" else fail)("initial state stopped", init["state"])
 
         await ws.send(json.dumps({"type": "start"}))
-        states, levels, utts, logs = [], [], [], []
+        states, levels, utts, logs, stats, metrics = [], [], [], [], [], []
         t0 = time.time()
         player_t = None
         while time.time() - t0 < 240:
@@ -107,7 +121,12 @@ async def main():
                 utts.append(msg)
                 print(f"    utterance: {msg['speaker']} [{msg['src_lang']}] {msg['src_text']}")
                 print(f"               [{msg['tgt_lang']}] {msg['translated']}")
+            elif kind == "line_metrics":
+                metrics.append(msg)
+                print(f"    line metrics: lag {msg['lag_s']} s, stages {msg['stages']}")
                 break
+            elif kind == "stats":
+                stats.append(msg)
             elif kind == "log":
                 logs.append(msg["msg"])
 
@@ -124,6 +143,17 @@ async def main():
         else:
             fail("utterance event", f"none received; logs={logs[-5:]}")
 
+        if metrics:
+            m = metrics[0]
+            total = sum(m["stages"].values()) / 1000
+            (ok if abs(total - m["lag_s"]) < 0.15 else fail)(
+                "lag breakdown adds up to the lag", f"{total:.2f} s vs {m['lag_s']} s")
+        else:
+            fail("line_metrics event", "none received")
+        live = [s for s in stats if s.get("listening")]
+        (ok if live and live[-1]["system"].get("vram_total_gb") else fail)(
+            "stats events carry system metrics", str(live[-1]["system"]) if live else "none")
+
         await ws.send(json.dumps({"type": "stop"}))
         t1 = time.time()
         stopped = False
@@ -138,13 +168,19 @@ async def main():
         await ws.send(json.dumps({"type": "start"}))
         t2 = time.time()
         running = False
+        seen = []
         while time.time() - t2 < 20:
-            msg = json.loads(await ws.recv())
+            try:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=1))
+            except asyncio.TimeoutError:
+                continue
+            if msg["type"] in ("status", "log"):
+                seen.append(msg.get("state") or msg.get("msg"))
             if msg["type"] == "status" and msg["state"] == "running":
                 running = True
                 break
         (ok if running and time.time() - t2 < 10 else fail)(
-            "restart without reloading models", f"{time.time()-t2:.1f}s")
+            "restart without reloading models", f"{time.time()-t2:.1f}s  {seen if not running else ''}")
         await ws.send(json.dumps({"type": "stop"}))
         await asyncio.sleep(1)
 

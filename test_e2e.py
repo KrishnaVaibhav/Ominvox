@@ -85,7 +85,7 @@ try:
         assert r.status == 200, f"status={r.status}"
         assert "Ominvox" in body, "title not found"
         assert "WebSocket" in body, "WS client script not found"
-        assert "togglePipeline" in body, "JS function not found"
+        assert "lag-chart" in body, "performance panel not found"
         ok("HTTP GET / returns 200 with Ominvox HTML", f"{len(body)} bytes")
 except Exception as e:
     fail("HTTP GET /", str(e))
@@ -291,9 +291,12 @@ async def ws_event_emission():
 
         threading.Thread(target=emit_from_thread, daemon=True).start()
 
-        for _ in range(2):
-            raw = await asyncio.wait_for(ws.recv(), timeout=4)
-            received.append(json.loads(raw))
+        deadline = time.time() + 4         # skip periodic stats/level frames
+        while time.time() < deadline and len({m.get("type") for m in received} & {"utterance", "log"}) < 2:
+            try:
+                received.append(json.loads(await asyncio.wait_for(ws.recv(), timeout=1)))
+            except asyncio.TimeoutError:
+                continue
 
     server_task.cancel()
     return received

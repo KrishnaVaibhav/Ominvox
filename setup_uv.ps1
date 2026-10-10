@@ -68,5 +68,24 @@ $chk = Join-Path $root "check_output.txt"
 $checkExit = $LASTEXITCODE
 Get-Content $chk
 
-Write-Output "`n===== SETUP COMPLETE (self-test exit code: $checkExit) ====="
 if ($checkExit -ne 0) { throw "Self-test failed (exit $checkExit) - see check_output.txt" }
+
+Write-Output "`n=== Building Ominvox.exe (double-click launcher) ==="
+# stderr merged inside cmd for the same PowerShell 5.1 reason as the self-test above
+try { & cmd /c "`"$(Join-Path $root 'build_exe.bat')`" 2>&1" } catch { Write-Output "(build failed: $_)" }
+$exe = Join-Path $root "Ominvox.exe"
+if (Test-Path $exe) {
+  try {
+    $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Ominvox.lnk"
+    $sh = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+    $sh.TargetPath = $exe; $sh.WorkingDirectory = $root
+    $sh.IconLocation = "$exe,0"; $sh.Description = "Ominvox - live movie translation"
+    $sh.Save()
+    Write-Output "Desktop shortcut created: $lnk"
+  } catch { Write-Output "(Could not create a desktop shortcut: $_)" }
+} else {
+  Write-Output "(Ominvox.exe was not built - you can still use start_ui.bat)"
+}
+
+Write-Output "`n===== SETUP COMPLETE (self-test exit code: $checkExit) ====="
+Write-Output "Start Ominvox with the desktop shortcut, Ominvox.exe, or start_ui.bat."

@@ -37,10 +37,23 @@ def pa_term(pa) -> None:
             pass
 
 
+def wasapi_default_output(pa) -> dict | None:
+    """The default speakers as a WASAPI device (the API loopback capture uses)."""
+    try:
+        api = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+        return pa.get_device_info_by_index(api["defaultOutputDevice"])
+    except Exception:
+        return None
+
+
 def enumerate_devices() -> dict:
-    """Return EVERY selectable audio device for the UI:
-      inputs  = system-audio loopbacks (kind='system') AND microphones/line-in (kind='mic')
-      outputs = real playback devices
+    """Return every selectable audio device for the UI, WASAPI only.
+
+    Windows lists each device once per audio API (MME, DirectSound, WASAPI...),
+    and MME cuts names to 31 characters, so showing all of them gives several
+    near-identical entries per device. Loopback capture needs WASAPI anyway.
+      inputs  = system-audio loopbacks (kind='system') + microphones/line-in (kind='mic')
+      outputs = playback devices
     Shape: {'inputs':[{index,name,kind,default}], 'outputs':[{index,name,default}],
             'default_input', 'default_output'}.
     """
@@ -49,72 +62,38 @@ def enumerate_devices() -> dict:
         return out
     pa = pa_new()
     try:
+        try:
+            api = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+        except Exception:
+            return out
+        wasapi = api["index"]
+        default_out = api.get("defaultOutputDevice", -1)
+        default_mic = api.get("defaultInputDevice", -1)
         default_loop = None
         try:
             default_loop = int(pa.get_default_wasapi_loopback()["index"])
         except Exception:
             pass
-        default_mic = None
-        try:
-            default_mic = int(pa.get_default_input_device_info()["index"])
-        except Exception:
-            pass
-        try:
-            out["default_output"] = int(pa.get_default_output_device_info()["index"])
-        except Exception:
-            pass
-        out["default_input"] = default_loop if default_loop is not None else default_mic
 
-        loopback_idx = set()
-        # 1) System-audio loopbacks (what the movie plays through)
-        try:
-            for d in pa.get_loopback_device_info_generator():
-                idx = int(d["index"])
-                loopback_idx.add(idx)
-                out["inputs"].append({
-                    "index": idx,
-                    "name": d["name"].replace(" [Loopback]", ""),
-                    "kind": "system",
-                    "default": idx == default_loop,
-                })
-        except Exception:
-            pass
-        # 2) Real input devices: microphones, line-in, capture cards, virtual cables
-        seen_names = set()
+        loopbacks, mics, outputs = [], [], []
         for i in range(pa.get_device_count()):
-            info = pa.get_device_info_by_index(i)
-            idx = int(info["index"])
-            if idx in loopback_idx:
+            d = pa.get_device_info_by_index(i)
+            if d.get("hostApi") != wasapi:
                 continue
-            if int(info.get("maxInputChannels", 0)) <= 0:
-                continue
-            if "loopback" in info["name"].lower():
-                continue
-            if info["name"] in seen_names:
-                continue
-            seen_names.add(info["name"])
-            out["inputs"].append({
-                "index": idx,
-                "name": info["name"],
-                "kind": "mic",
-                "default": idx == default_mic,
-            })
-        # 3) Outputs (for playback / avoiding the echo loop)
-        seen_out = set()
-        for i in range(pa.get_device_count()):
-            info = pa.get_device_info_by_index(i)
-            if int(info.get("maxOutputChannels", 0)) <= 0:
-                continue
-            if "loopback" in info["name"].lower():
-                continue
-            if info["name"] in seen_out:
-                continue
-            seen_out.add(info["name"])
-            out["outputs"].append({
-                "index": int(info["index"]),
-                "name": info["name"],
-                "default": int(info["index"]) == out["default_output"],
-            })
+            idx = int(d["index"])
+            if d.get("isLoopbackDevice") or "[Loopback]" in d["name"]:
+                loopbacks.append({"index": idx, "name": d["name"].replace(" [Loopback]", ""),
+                                  "kind": "system", "default": idx == default_loop})
+            elif int(d.get("maxInputChannels", 0)) > 0:
+                mics.append({"index": idx, "name": d["name"], "kind": "mic",
+                             "default": idx == default_mic})
+            elif int(d.get("maxOutputChannels", 0)) > 0:
+                outputs.append({"index": idx, "name": d["name"], "default": idx == default_out})
+        out["inputs"] = loopbacks + mics
+        out["outputs"] = outputs
+        out["default_input"] = default_loop if default_loop is not None else (
+            default_mic if default_mic >= 0 else None)
+        out["default_output"] = default_out if default_out >= 0 else None
     finally:
         pa_term(pa)
     return out
@@ -132,7 +111,10 @@ class LoopbackCapture:
         self.error: str | None = None          # set if the capture thread fails
         self._level = 0.0                      # last chunk RMS (see .level)
         self._level_ts = 0.0
-        self._q: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=64)
+        # (monotonic time the chunk ENDED, audio). Timestamps let the pipeline
+        # measure how far the translation lags behind the original speech.
+        self._q: "queue.Queue[tuple[float, np.ndarray]]" = queue.Queue(maxsize=64)
+        self.dropped_chunks = 0
         self._stop = threading.Event()
         self._opened = threading.Event()       # set once the stream opened (or failed)
         self._thread: threading.Thread | None = None
@@ -142,8 +124,8 @@ class LoopbackCapture:
         """Live input RMS for the UI meter. Decays with time, so it falls to zero
         when the source goes quiet (WASAPI loopback delivers NO data at all while
         nothing is playing, so we can't rely on silent chunks arriving)."""
-        age = time.monotonic() - self._level_ts
-        return self._level * (0.5 ** (age / 0.3)) if age > 0.3 else self._level
+        age = max(0.0, time.monotonic() - self._level_ts)
+        return self._level * (0.5 ** (age / 0.3))      # halves every 0.3 s
 
     @classmethod
     def from_cfg(cls, cfg: dict) -> "LoopbackCapture":
@@ -208,36 +190,23 @@ class LoopbackCapture:
             self.device_name = dev["name"]
             frames = int(src_sr * self.block_ms / 1000)
             reported = int(dev.get("maxInputChannels", 2)) or 2
-            ch_box = [reported]
-
-            # Callback mode, not blocking read(): a loopback stream gets no data
-            # while nothing plays, so read() would block forever and stop() could
-            # never close the stream.
-            def _callback(in_data, frame_count, time_info, status):
-                a = np.frombuffer(in_data, dtype=np.float32).reshape(-1, ch_box[0]).mean(axis=1)
-                a = self._resample(a, src_sr, self.target_sr)
-                if len(a):
-                    rms = float(np.sqrt(np.mean(a * a)))
-                    self._level = max(rms, self.level * 0.85)
-                    self._level_ts = time.monotonic()
-                try:
-                    self._q.put_nowait(a)
-                except queue.Full:
-                    pass  # drop on backpressure to stay live
-                return (None, pyaudio.paContinue)
 
             # Some loopback devices (e.g. game headsets) reject their reported
             # channel count with -9998; try the reported value, then 2, then 1.
-            tried = []
+            # Blocking mode, NOT callback mode: callback-mode loopback fails with
+            # -9999 "Unanticipated host error" when this process is also playing
+            # to that device (measured). But a blocking read() would wait forever
+            # on a loopback while nothing plays, so we only ever read frames that
+            # are already available (see the loop below).
+            tried, ch = [], None
             for c in dict.fromkeys([reported, 2, 1]):
-                ch_box[0] = c
                 try:
                     stream = pa.open(
                         format=pyaudio.paFloat32, channels=c, rate=src_sr,
                         frames_per_buffer=frames, input=True,
                         input_device_index=dev["index"],
-                        stream_callback=_callback,
                     )
+                    ch = c
                     break
                 except Exception as e:
                     tried.append(f"{c}ch({e})")
@@ -246,11 +215,28 @@ class LoopbackCapture:
                 raise RuntimeError(
                     f"could not open '{dev['name']}' at {src_sr} Hz "
                     f"[tried {', '.join(tried)}]")
-            stream.start_stream()
             print(f"[capture] device [{dev['index']}] {dev['name']} "
-                  f"({src_sr} Hz, {ch_box[0]} ch)", flush=True)
+                  f"({src_sr} Hz, {ch} ch)", flush=True)
             self._opened.set()
-            self._stop.wait()
+            while not self._stop.is_set():
+                if stream.get_read_available() < frames:
+                    self._stop.wait(0.01)          # nothing to read yet: never block
+                    continue
+                raw = stream.read(frames, exception_on_overflow=False)
+                a = np.frombuffer(raw, dtype=np.float32).reshape(-1, ch).mean(axis=1)
+                a = self._resample(a, src_sr, self.target_sr)
+                now = time.monotonic()
+                if len(a):
+                    rms = float(np.sqrt(np.mean(a * a)))
+                    # decaying peak, decayed by elapsed time (not per chunk), so the
+                    # meter falls just as fast whether silence arrives as quiet
+                    # chunks or as no chunks at all
+                    self._level = max(rms, self.level)
+                    self._level_ts = now
+                try:
+                    self._q.put_nowait((now, a))
+                except queue.Full:
+                    self.dropped_chunks += 1  # drop on backpressure to stay live
         except Exception as e:
             self.error = str(e)
             print(f"[capture] ERROR: {e}", flush=True)
@@ -293,15 +279,18 @@ class LoopbackCapture:
         except queue.Empty:
             pass
 
-    def chunks(self):
+    def chunks(self, with_time: bool = False):
         """Yield audio chunks. Yields None when no audio arrived for one block
-        (source paused/silent), so consumers can treat it as silence."""
+        (source paused/silent), so consumers can treat it as silence.
+        with_time=True yields (end_time_monotonic, chunk) pairs instead
+        ((now, None) for the silence marker)."""
         wait = max(self.block_ms / 1000.0, 0.05)
         while not self._stop.is_set():
             try:
-                yield self._q.get(timeout=wait)
+                t, a = self._q.get(timeout=wait)
             except queue.Empty:
-                yield None
+                t, a = time.monotonic(), None
+            yield (t, a) if with_time else a
 
     def stop(self):
         self._stop.set()

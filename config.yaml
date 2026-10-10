@@ -58,14 +58,21 @@ vad:
   max_segment_s: 8.0           # force-cut an utterance at this length (avoids unbounded buffers)
 
 speaker_id:
-  threshold: 0.68              # cosine similarity floor for voice-profile matching
-  # Measured on real speech (clips >= 2 s): same voice >= 0.71, different <= 0.65.
+  threshold: 0.62              # cosine similarity floor for voice-profile matching
+  # Tuned on a 4-voice dialogue (7 renders): fewest splits + merges at 0.62.
   # Raise if different people get merged; lower if one person gets split.
   min_seconds: 1.6             # seconds of actual speech; shorter lines (a word or two) are
                                # given to the closest known speaker, never learned from
 
 playback:
-  delay_ms: 1500               # buffer to absorb pipeline jitter (subtitle-style offset)
+  # asap  = speak each line as soon as it's translated (lowest delay; the lag
+  #         behind the video varies line to line)
+  # fixed = speak each line exactly fixed_lag_ms after the original line started.
+  #         The lag is constant, so set your video player's audio delay to
+  #         -fixed_lag_ms and the translated voice lines up with the picture.
+  sync_mode: "asap"
+  fixed_lag_ms: 4000           # used in fixed mode; the app suggests a value from live stats
+  delay_ms: 0                  # extra wait in asap mode
   duck_original_db: -12        # how much to lower the original movie audio
   sample_rate: 24000           # XTTS-v2 native output rate; must match VoiceSynth output
   # FEEDBACK GUARD: null = play to default output = the device loopback records,
