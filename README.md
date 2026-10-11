@@ -366,7 +366,7 @@ installer\
   installer.py           OminvoxSetup.exe (tkinter; embeds the app as payload.zip)
   build_payload.py       packs the app files for the installer
   make_icon.py           draws assets\ominvox.ico
-scripts\                 build_exe.bat, audiotest/devices/check.bat, setup_conda.bat
+scripts\                 build_exe.bat (local build), build_release.ps1 (CI / release build), audiotest/devices/check.bat, setup_conda.bat
 tests\                   test suites + run_all.py
 .github\                 CI, CodeQL and release workflows, issue / PR templates, Dependabot
 docs\                    project plan, history

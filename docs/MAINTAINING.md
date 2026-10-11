@@ -6,10 +6,10 @@ Notes for the maintainer: reviewing pull requests, merging, and releasing.
 
 | Workflow | When | What it does |
 |---|---|---|
-| **CI** (`ci.yml`) | every push to `master` and every PR | ruff lint, `node --check` on the front end, a scan for committed tokens / `.env`, and the fast test suites on Windows |
+| **CI** (`ci.yml`) | every push to `master` and every PR | **Lint** (ruff, `node --check` on the front end, a scan for committed tokens / `.env`), **Fast tests** on Windows, and **Build installer** (builds both programs and attaches `OminvoxSetup.exe` to the run for 7 days, so you can try a PR without building it) |
 | **CodeQL** (`codeql.yml`) | PRs, pushes, weekly | security analysis of the Python and JavaScript |
 | **Release** (`release.yml`) | pushing a `v*` tag | builds `Ominvox.exe` + `OminvoxSetup.exe` on a clean Windows machine and drafts a GitHub Release with the installer attached |
-| **Dependabot** (`dependabot.yml`) | monthly | PRs for GitHub Actions and Python dependency updates (transformers 5 and PyTorch are excluded on purpose) |
+| **Dependabot** (`dependabot.yml`) | monthly | at most **one PR for all Python packages** and one for GitHub Actions, each jumping to the latest stable versions (transformers 5 and PyTorch are excluded on purpose). Run the GPU suites locally before merging the Python one. |
 
 GitHub's machines have no NVIDIA GPU, so the **GPU suites never run in CI**.
 
@@ -37,7 +37,7 @@ PR, and lets you edit the final message before it lands. That's where to
 remove any `Co-authored-by:` or "Generated with …" lines a contributor's
 commits carry. GitHub records the PR author as the author of a squashed commit.
 
-`master` is protected: changes from others come in through PRs with CI passing.
+`master` is protected: a PR can only be merged when the **Lint**, **Fast tests (Windows)** and **Build installer** checks pass and you (the code owner) have approved it. As admin you can still push to `master` directly.
 
 ## Releasing
 

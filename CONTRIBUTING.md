@@ -92,7 +92,7 @@ Each test file is a plain script using the small `Results` helper in
 
 - Write commit messages in the imperative: "Fix echo warning for mic inputs".
 - Open the PR against `master` and fill in the template.
-- CI must pass (lint, fast tests, JS check, CodeQL).
+- These checks must pass before a PR can be merged: **Lint**, **Fast tests (Windows)** and **Build installer** (CodeQL also runs). The build job attaches the installer to the run, so you can test your change as users would get it.
 - The maintainer reviews every PR. Expect questions - they're about keeping the
   app simple for non-technical users, not about you.
 - Please don't add `Co-authored-by:` or "Generated with ..." trailers to your
