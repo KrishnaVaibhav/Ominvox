@@ -78,7 +78,6 @@ if "installer" in SCENES:
 fx = _media_fixtures.get()
 DEMO = ROOT / ".cache" / "demo" / "interview.mp4"
 DEMO.parent.mkdir(parents=True, exist_ok=True)
-shutil.rmtree(DEMO.parent / "Ominvox", ignore_errors=True)       # earlier results
 shutil.copy(fx["mp4"], DEMO)
 _speech, _ = media.decode_audio(str(DEMO), 1, 16000)
 _parts = [np.zeros(16000, np.float32)]
@@ -280,8 +279,15 @@ try:
         js("setMode('files')")
         shot("files-empty")
         viewport(1180)                     # tall enough for the whole form
-        js(f"send({{type: 'file_open', path: {json.dumps(str(DEMO))}}})")
+        # the same upload the page makes when a file is dropped on it
+        urllib.request.urlopen(urllib.request.Request(
+            f"http://127.0.0.1:{PORT}/api/upload?name={DEMO.name}", data=DEMO.read_bytes(), method="PUT"))
         wait("F.info && F.detected[F.track] && !F.detected[F.track].busy", 300, "language detection")
+        # dropped files save to <Ominvox>\output; keep the demo's results next to it instead
+        results = DEMO.parent / "Ominvox"
+        shutil.rmtree(results, ignore_errors=True)
+        srv.files.out_dir = str(results)
+        srv.files.emit({"type": "file_out_dir", "out_dir": str(results)})
         time.sleep(1)
         js("document.querySelectorAll('#chips label').forEach(l => { const cb = l.querySelector('input');"
            " const on = ['Spanish', 'French', 'German'].some(w => l.textContent.includes(w));"

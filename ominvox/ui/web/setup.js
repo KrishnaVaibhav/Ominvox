@@ -76,7 +76,10 @@ function renderChecks() {
   for (const c of fr.checks) {
     const row = document.createElement('div');
     row.className = 'check';
-    row.innerHTML = `<span class="ic ${c.status}">${icon[c.status]}</span><div><b></b><span></span></div>`;
+    const status = c.status in icon ? c.status : 'warn';
+    row.innerHTML = '<span class="ic"></span><div><b></b><span></span></div>';
+    row.querySelector('.ic').classList.add(status);
+    row.querySelector('.ic').textContent = icon[status];
     row.querySelector('b').textContent = c.label;
     row.querySelector('span:not(.ic)').textContent = c.detail;
     if (c.fix_url) {

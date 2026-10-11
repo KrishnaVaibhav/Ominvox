@@ -36,6 +36,9 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 _HTML = (WEB_DIR / "index.html").read_text(encoding="utf-8")
 STATIC_TYPES = {".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml",
                 ".png": "image/png", ".ico": "image/x-icon"}
+# Only these files are served under /static: the URL picks one by name and is
+# never turned into a path itself.
+STATIC_FILES = {p.name: p for p in WEB_DIR.iterdir() if p.suffix in STATIC_TYPES}
 APP_ID = "ominvox"
 
 
@@ -448,16 +451,17 @@ class UIServer:
 
         @app.get("/static/{name}")
         async def static(name: str):
-            f = (WEB_DIR / name).resolve()
-            if f.parent != WEB_DIR or f.suffix not in STATIC_TYPES or not f.is_file():
+            f = STATIC_FILES.get(name)
+            if f is None or not f.is_file():
                 return Response(status_code=404)
             return Response(f.read_bytes(), media_type=STATIC_TYPES[f.suffix],
                             headers={"Cache-Control": "no-cache"})
 
         @app.put("/api/upload")
         async def upload(request: Request, name: str = "upload"):
-            """A file dropped on the Files tab (the page can't see its real path)."""
-            if not self._same_origin(request.headers.get("origin")):
+            """A file dropped on the Files tab (the page can't see its real path).
+            It's opened here, so the page never names a path on this PC."""
+            if not self._same_origin(request.headers.get("origin"), request.headers.get("host")):
                 return Response(status_code=403)
             if self.files.running:       # the job may be reading the previous upload
                 return Response(status_code=409)
@@ -468,7 +472,8 @@ class UIServer:
             with open(dst, "wb") as f:
                 async for chunk in request.stream():
                     f.write(chunk)
-            return JSONResponse({"path": str(dst)})
+            threading.Thread(target=self.files.open_upload, args=(dst,), daemon=True).start()
+            return JSONResponse({"name": dst.name})
 
         @app.get("/api/health")
         async def health():
@@ -478,7 +483,7 @@ class UIServer:
         async def ws_handler(websocket: WebSocket):
             # Only this app's own page may connect: any web page in the browser
             # could otherwise reach 127.0.0.1 and drive the app.
-            if not self._same_origin(websocket.headers.get("origin")):
+            if not self._same_origin(websocket.headers.get("origin"), websocket.headers.get("host")):
                 await websocket.close(code=1008)
                 return
             await websocket.accept()
@@ -533,13 +538,18 @@ class UIServer:
         return app
 
     @staticmethod
-    def _same_origin(origin: str | None) -> bool:
-        """True for our own page (http://127.0.0.1:PORT / localhost) or no Origin
-        header (non-browser clients such as the tests)."""
+    def _same_origin(origin: str | None, host: str | None = None) -> bool:
+        """True for our own page or no Origin header (non-browser clients such
+        as the tests). Our page is on 127.0.0.1 / localhost AND on the address
+        it asked for (Host): another local server's page on a different port,
+        or a site whose name was pointed at 127.0.0.1, doesn't pass."""
         if not origin:
             return True
         from urllib.parse import urlparse
-        return urlparse(origin).hostname in ("127.0.0.1", "localhost", "::1")
+        o = urlparse(origin)
+        if o.hostname not in ("127.0.0.1", "localhost", "::1"):
+            return False
+        return host is None or o.netloc.lower() == host.lower()
 
     # ── entry points ──────────────────────────────────────────
 

@@ -173,7 +173,7 @@ Every choice is saved and restored the next time you open Ominvox. Devices are r
 
 **Performance** (left picture) shows the live numbers:
 
-> The pictures were taken on a laptop whose graphics card stayed in a power-saving state, so the voice step was slow and the lag shown (about 11 s) is higher than a GPU running at full speed gives. On laptops, use the maximum-performance power and GPU mode.
+> In the pictures the lag is about 10 s because the demo is a non-stop dialogue: each translated line waits for the one before it to finish playing (*Playback wait*), on top of the time the person spends speaking. Films with normal pauses between lines give less. On laptops, use the maximum-performance power and GPU mode; in power-saving mode the voice step can take several times longer.
 
 | Item | Meaning |
 |---|---|
@@ -231,7 +231,7 @@ Click **Files** at the top of the window (next to **Live**). Here Ominvox transl
    - **One voice for everyone**: use one voice for all speakers instead of matching each speaker.
 6. Click **Translate**. Progress shows each language, the time left and the line being spoken. **Cancel** stops it at any time. When it's done, **Show** opens each file in Explorer.
 
-Results go to an **`Ominvox`** folder next to the file. Use **Change…** to save them somewhere else. Existing files are never overwritten (a second run makes `film.es (2).mp3`). The video picture is copied as it is, never re-encoded, so it keeps its full quality and saving is quick.
+Results go to an **`Ominvox`** folder next to the file (for a file dragged onto the window, to the **`output`** folder inside your Ominvox folder, because the window can't see where the dropped file came from). Use **Change…** to save them somewhere else. Existing files are never overwritten (a second run makes `film.es (2).mp3`). The video picture is copied as it is, never re-encoded, so it keeps its full quality and saving is quick.
 
 | You chose | You get (for `film.mp4`, Spanish + German, subtitles on) |
 |---|---|
@@ -260,6 +260,7 @@ Good to know:
 | `user_settings.json` | The choices you made in the app (created automatically). |
 | `.env` | Your Hugging Face token (created by the setup screen). Keep it private. |
 | `.cache\` | The downloaded AI models and your saved speakers. |
+| `output\` | Translations of files you dragged onto the Files tab. |
 | `logs\` | `ominvox.log` (app) and `setup.log` (installer). Useful when something goes wrong. |
 
 ### Command line (optional)

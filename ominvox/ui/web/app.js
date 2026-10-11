@@ -97,11 +97,16 @@ function renderDevices() {
   if (!devices) return;
   const inSel = $('input-sel'), outSel = $('output-sel');
   const sys = devices.inputs.filter(d => d.kind === 'system'), mics = devices.inputs.filter(d => d.kind !== 'system');
-  const opt = (d, extra) => `<option value="${d.index}">${escHtml(d.name)}${d.default ? ' (default)' : ''}${extra || ''}</option>`;
-  inSel.innerHTML = '<option value="">Automatic — default speakers</option>' +
-    (sys.length ? `<optgroup label="Computer sound (what's playing)">${sys.map(d => opt(d)).join('')}</optgroup>` : '') +
-    (mics.length ? `<optgroup label="Microphones / line-in">${mics.map(d => opt(d)).join('')}</optgroup>` : '');
-  outSel.innerHTML = '<option value="">Automatic — default speakers</option>' + devices.outputs.map(d => opt(d)).join('');
+  const opt = d => new Option(d.name + (d.default ? ' (default)' : ''), String(d.index));
+  const group = (label, list) => {
+    const g = document.createElement('optgroup'); g.label = label;
+    list.forEach(d => g.appendChild(opt(d)));
+    return g;
+  };
+  inSel.replaceChildren(new Option('Automatic — default speakers', ''));
+  if (sys.length) inSel.appendChild(group("Computer sound (what's playing)", sys));
+  if (mics.length) inSel.appendChild(group('Microphones / line-in', mics));
+  outSel.replaceChildren(new Option('Automatic — default speakers', ''), ...devices.outputs.map(opt));
   inSel.value = cfg.input_device_index == null ? '' : String(cfg.input_device_index);
   outSel.value = cfg.output_device_index == null ? '' : String(cfg.output_device_index);
   if (inSel.value === '' && cfg.input_device_index != null) inSel.value = '';
@@ -298,13 +303,19 @@ function handleStats(s) {
 }
 
 function renderStages() {
-  const avg = lastStats && lastStats.stages_avg;
-  const last = lastLine && lastLine.stages;
-  const sum = o => o ? STAGES.reduce((a, s) => a + (o[s.key] || 0), 0) : 0;
+  const nums = o => o ? Object.fromEntries(STAGES.map(s => [s.key, Number(o[s.key]) || 0])) : null;
+  const avg = nums(lastStats && lastStats.stages_avg);
+  const last = nums(lastLine && lastLine.stages);
+  const sum = o => o ? STAGES.reduce((a, s) => a + o[s.key], 0) : 0;
   const lastTotal = sum(last), avgTotal = sum(avg);
   // stacked bar = the last line's lag, split into its parts
-  $('stage-stack').innerHTML = lastTotal ? STAGES.filter(s => last[s.key] > 0).map(s =>
-    `<div style="flex-grow:${last[s.key]};background:var(${s.color})" title="${s.label}: ${fmtMs(last[s.key])}"></div>`).join('') : '';
+  $('stage-stack').replaceChildren(...(lastTotal ? STAGES.filter(s => last[s.key] > 0).map(s => {
+    const seg = document.createElement('div');
+    seg.style.flexGrow = last[s.key];
+    seg.style.background = `var(${s.color})`;
+    seg.title = `${s.label}: ${fmtMs(last[s.key])}`;
+    return seg;
+  }) : []));
   $('stage-rows').innerHTML = STAGES.map(s => `<tr title="${s.tip}">
       <td><i class="swatch" style="background:var(${s.color});margin-right:6px"></i>${s.label}</td>
       <td class="n">${last ? fmtMs(last[s.key]) : '–'}</td>

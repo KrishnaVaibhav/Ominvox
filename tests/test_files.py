@@ -24,6 +24,7 @@ import json
 import tempfile
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 import av
@@ -189,7 +190,10 @@ async def flow():
     async with websockets.connect(f"ws://127.0.0.1:{port}/ws") as ws:
         st = await until(ws, lambda m: m["type"] == "file_state", 10)
         R.check("file_state on connect lists 17 languages", st and len(st["languages"]) == 17)
-        await ws.send(json.dumps({"type": "file_open", "path": str(fx["mp4"])}))
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/upload?name=dialogue.mp4",
+                                     data=Path(fx["mp4"]).read_bytes(), method="PUT")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            R.check("upload accepted (the server opens the file itself)", json.loads(r.read())["name"] == "dialogue.mp4")
         st = await until(ws, lambda m: m["type"] == "file_state" and m.get("info"), 20)
         R.check("open: 2 tracks with languages", st and [t["lang_name"] for t in st["info"]["tracks"]] == ["French", "English"])
         det = await until(ws, lambda m: m["type"] == "file_lang" and not m.get("busy"), 60)

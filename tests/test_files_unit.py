@@ -124,6 +124,14 @@ from ominvox.ui.server import UIServer
 R.check("own page allowed", UIServer._same_origin("http://127.0.0.1:8765") and UIServer._same_origin(None))
 R.check("other sites refused", not UIServer._same_origin("https://evil.example.com")
         and not UIServer._same_origin("http://127.0.0.1.evil.com"))
+R.check("own page on its own port allowed", UIServer._same_origin("http://127.0.0.1:8765", "127.0.0.1:8765")
+        and UIServer._same_origin("http://localhost:8765", "localhost:8765"))
+R.check("another local server's page refused", not UIServer._same_origin("http://localhost:3000", "127.0.0.1:8765"))
+R.check("a site pointed at 127.0.0.1 refused", not UIServer._same_origin("http://evil.example.com:8765",
+                                                                          "evil.example.com:8765"))
+from ominvox.ui import server as server_mod
+R.check("/static serves only the page's own files", "app.js" in server_mod.STATIC_FILES
+        and "index.html" not in server_mod.STATIC_FILES and "..%2Fserver.py" not in server_mod.STATIC_FILES)
 from ominvox.ui.files_tab import FilesTab
 ft = FilesTab.__new__(FilesTab)
 ft._outputs, ft.out_dir = [str(tmp / "o.mp3")], str(tmp)
@@ -134,5 +142,7 @@ ft.reveal(r"C:\Windows\System32")
 ft.reveal(str(tmp / "o.mp3"))
 ft.reveal(str(tmp))
 R.check("reveal only shows this tab's results", len(opened) == 2 and r"C:\Windows\System32" not in str(opened), str(opened))
+R.check("the page can't open a path (only uploads are opened)",
+        ft.handle({"type": "file_open", "path": r"C:\Windows\win.ini"}) is False)
 
 R.finish()

@@ -66,8 +66,6 @@ class FilesTab:
                 path = dialogs.pick_file()
                 if path:
                     self.open(path)
-            elif t == "file_open":
-                self.open(str(msg.get("path", "")))
             elif t == "file_detect":
                 self.track = int(msg.get("track", 0))
                 self.detect(self.track)
@@ -91,6 +89,13 @@ class FilesTab:
         return True
 
     # ── choosing a file ───────────────────────────────────────
+
+    def open_upload(self, path: Path):
+        """Open a file the page uploaded (see server /api/upload)."""
+        try:
+            self.open(str(path))
+        except Exception as exc:
+            self.emit({"type": "file_error", "msg": str(exc)})
 
     def open(self, path: str):
         p = Path(path)
@@ -215,10 +220,14 @@ class FilesTab:
 
     def reveal(self, path: str):
         """Show a result in Explorer (only paths this tab produced or its folder)."""
-        allowed = set(self._outputs) | ({self.out_dir} if self.out_dir else set())
-        if path not in allowed or not Path(path).exists():
+        # Look the path up and use our own copy: the page's string is never opened.
+        allowed = {p: Path(p) for p in self._outputs}
+        if self.out_dir:
+            allowed[self.out_dir] = Path(self.out_dir)
+        target = allowed.get(path)
+        if target is None or not target.exists():
             return
-        if Path(path).is_dir():
-            os.startfile(path)                                       # noqa: S606
+        if target.is_dir():
+            os.startfile(target)                                     # noqa: S606
         else:
-            subprocess.Popen(["explorer", "/select,", str(Path(path))])
+            subprocess.Popen(["explorer", "/select,", str(target)])

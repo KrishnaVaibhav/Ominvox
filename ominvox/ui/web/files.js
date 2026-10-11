@@ -219,8 +219,7 @@ fv.addEventListener('drop', e => {
   xhr.upload.onprogress = ev => { if (ev.lengthComputable) $('drop-msg').textContent = `Loading ${file.name}… ${Math.round(100 * ev.loaded / ev.total)}%`; };
   xhr.onload = () => {
     $('drop-msg').textContent = '';
-    if (xhr.status === 200) send({type: 'file_open', path: JSON.parse(xhr.responseText).path});
-    else showToast(xhr.status === 409 ? 'Wait for the current translation to finish' : 'Could not load the file');
+    if (xhr.status !== 200) showToast(xhr.status === 409 ? 'Wait for the current translation to finish' : 'Could not load the file');
   };
   xhr.onerror = () => { $('drop-msg').textContent = ''; showToast('Could not load the file'); };
   xhr.send(file);
@@ -262,15 +261,17 @@ function renderLangRows(langs) {
   $('fp-count').textContent = codes.length ? `${codes.filter(c => langs[c].state === 'done').length} of ${codes.length}` : '–';
   $('fp-langs').innerHTML = codes.map(c => {
     const s = langs[c];
-    const frac = s.state === 'done' ? 1 : s.total ? s.done / s.total : 0;
-    const detail = s.state === 'voicing' && s.total ? ` ${s.done}/${s.total}` : '';
+    const done = Number(s.done) || 0, total = Number(s.total) || 0;
+    const state = escHtml(s.state);
+    const frac = s.state === 'done' ? 1 : total ? done / total : 0;
+    const detail = s.state === 'voicing' && total ? ` ${done}/${total}` : '';
     // Translations can run longer than the original; say how far lines slipped.
     const tip = s.error || (s.late_lines ? `${s.late_lines} line(s) start late, by up to ${s.late_max} s, `
       + 'because the translation is longer than the original line.' : '');
-    return `<div class="lang-row ${s.state}" title="${escHtml(tip)}">
+    return `<div class="lang-row ${state}" title="${escHtml(tip)}">
       <span class="ln">${escHtml(langName(c))}</span>
       <div class="pbar"><div style="width:${(frac * 100).toFixed(1)}%"></div></div>
-      <span class="ls">${LANG_STATE[s.state] || s.state}${detail}${s.state === 'done' && s.late_lines ? ' ⚠' : ''}</span></div>`;
+      <span class="ls">${LANG_STATE[s.state] || state}${detail}${s.state === 'done' && s.late_lines ? ' ⚠' : ''}</span></div>`;
   }).join('');
 }
 

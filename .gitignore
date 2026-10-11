@@ -48,3 +48,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+
+# results of files dropped on the Files tab
+/output/
