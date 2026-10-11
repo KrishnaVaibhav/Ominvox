@@ -1,0 +1,61 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please check the [Troubleshooting section](https://github.com/KrishnaVaibhav/Ominvox#7-troubleshooting) first.
+        **Never paste your Hugging Face token** (it starts with `hf_`). Security problems go to [SECURITY.md](https://github.com/KrishnaVaibhav/Ominvox/blob/master/SECURITY.md), not here.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen?
+      options:
+        - Installing (OminvoxSetup.exe / setup.ps1)
+        - Setup screen (licence, token, downloads)
+        - Live translation
+        - Files tab (translating a file)
+        - Audio devices / echo
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Opened Files, chose movie.mkv, picked Spanish + German, "Add as new tracks"
+        2. Expected one video with two new tracks
+        3. Got "…" after 40%
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The end of `logs\ominvox.log` (or `logs\setup.log` for install problems) in your Ominvox folder.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Ominvox version or commit
+      placeholder: "0.1.0, or the commit hash if you run from source"
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics card and driver
+      placeholder: "RTX 4070 Laptop 8 GB, driver 581.08"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, the file type you translated, audio devices in use, etc.

@@ -130,14 +130,6 @@ async def ws_initial():
         return msg
 
 try:
-    import websockets
-    msg = asyncio.run(ws_initial())
-    ok("WS connects and receives initial status", f"state={msg['state']!r}")
-    ok("Initial status.config has all expected keys")
-except ImportError:
-    import subprocess
-    subprocess.run([sys.executable,"-m","pip","install","websockets","-q"])
-    import websockets
     msg = asyncio.run(ws_initial())
     ok("WS connects and receives initial status", f"state={msg['state']!r}")
     ok("Initial status.config has all expected keys")

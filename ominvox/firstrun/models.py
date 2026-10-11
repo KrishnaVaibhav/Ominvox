@@ -203,7 +203,7 @@ class ModelManager:
             m.state, m._base = "downloading", _dir_bytes(m.dirs())
             stop = threading.Event()
 
-            def watch(model=m):
+            def watch(model=m, stop=stop):       # bind this download's own stop event
                 while not stop.wait(0.5):
                     grown = _dir_bytes(model.dirs()) - model._base
                     model.done_bytes = max(0, min(grown, int(model.size * 0.99)))

@@ -1,0 +1,12 @@
+# Normalise line endings in the repository (LF), whatever the contributor's settings.
+* text=auto
+
+# cmd.exe and Windows PowerShell 5 need CRLF in the files they run, including
+# in GitHub's "Download ZIP" archives.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.ico binary
+*.png binary
+*.exe binary

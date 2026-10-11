@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # coqui-tts 0.27 breaks on transformers 5 (see requirements.txt).
+      - dependency-name: transformers
+        versions: [">=5"]
+      # PyTorch is pinned in setup.ps1 (2.6 + CUDA 12.4), not in requirements.
+      - dependency-name: torch
+      - dependency-name: torchaudio

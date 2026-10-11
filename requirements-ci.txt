@@ -1,0 +1,16 @@
+# What CI needs to run the fast test suites (tests\run_all.py fast) on GitHub's
+# Windows machines. These have no NVIDIA GPU, so PyTorch and the AI models are
+# left out; the app code imports them lazily and the fast suites don't use them.
+numpy>=1.26
+scipy>=1.11
+pyyaml>=6.0
+soundfile>=0.12
+av>=14
+faster-whisper>=1.0.3
+huggingface_hub>=0.24
+PyAudioWPatch>=0.2.12.6 ; sys_platform == "win32"
+fastapi>=0.115
+uvicorn[standard]>=0.30
+websockets>=12
+psutil>=5.9
+nvidia-ml-py>=12

@@ -1,0 +1,50 @@
+# Push a tag like v0.2.0 (matching ominvox/__init__.py) to build Ominvox.exe and
+# OminvoxSetup.exe on a clean Windows machine and publish them as a GitHub Release.
+# The release starts as a draft so the maintainer can check it before publishing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag matches the app version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path ominvox/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") {
+            Write-Error "Tag ${{ github.ref_name }} doesn't match __version__ $v in ominvox/__init__.py"
+            exit 1
+          }
+
+      - name: Build Ominvox.exe and OminvoxSetup.exe
+        shell: pwsh
+        run: |
+          pip install -r requirements-build.txt
+          $build = ".cache/build"
+          $pyi = @("--noconfirm", "--onefile", "--windowed", "--workpath", $build, "--specpath", $build)
+          python installer/make_icon.py
+          python -m PyInstaller @pyi --name Ominvox --icon "$PWD/assets/ominvox.ico" --distpath . installer/launcher.py
+          python installer/build_payload.py
+          python -m PyInstaller @pyi --name OminvoxSetup --icon "$PWD/assets/ominvox.ico" --distpath dist `
+            --add-data "$PWD/$build/payload.zip;." --add-data "$PWD/assets/ominvox.ico;." installer/installer.py
+          Get-Item dist/OminvoxSetup.exe | Format-List Name, Length
+
+      - name: Draft the release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: dist/OminvoxSetup.exe

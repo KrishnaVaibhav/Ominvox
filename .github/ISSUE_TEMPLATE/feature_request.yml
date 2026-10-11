@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an idea or improvement.
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: Describe the problem or situation, not just the solution.
+      placeholder: "When I translate a series, I have to pick the same languages for every episode…"
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could Ominvox help?
+      placeholder: "Let me drop several files at once and translate them one after another."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you tried or considered?
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to work on this myself (see CONTRIBUTING.md)

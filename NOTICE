@@ -1,0 +1,23 @@
+Ominvox
+Copyright 2026 Krishna Vaibhav
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Ominvox does not include any AI model weights. It downloads them on first run,
+after the user agrees to their terms, and each model keeps its own licence:
+
+  - XTTS-v2 (voice), Coqui Public Model License 1.0.0 - NON-COMMERCIAL use only.
+    https://coqui.ai/cpml
+  - pyannote speaker-diarization-3.1 and segmentation-3.0, MIT; the wespeaker
+    voice-embedding model, CC-BY 4.0. Gated on Hugging Face (users accept the
+    terms there).
+  - Whisper (via faster-whisper / CTranslate2), MIT.
+  - NLLB-200 distilled 600M (translation), CC-BY-NC 4.0 - NON-COMMERCIAL use only.
+  - Silero VAD, MIT.
+
+Because the voice and translation models are non-commercial, using Ominvox
+with them is limited to non-commercial use, whatever the licence of this code.
+
+Python libraries are installed by setup.ps1 from PyPI under their own licences
+(e.g. coqui-tts MPL-2.0, PyTorch BSD-3-Clause, PyAV BSD-3-Clause with FFmpeg
+LGPL libraries, transformers Apache-2.0, FastAPI MIT).

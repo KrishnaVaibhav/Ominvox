@@ -100,8 +100,8 @@ class FilesTab:
             raise RuntimeError("A file is being translated. Cancel it first.")
         try:
             info = media.probe(p)
-        except Exception:
-            raise RuntimeError(f"Can't read {p.name} - is it an audio or video file?")
+        except Exception as exc:
+            raise RuntimeError(f"Can't read {p.name} - is it an audio or video file?") from exc
         if not info["tracks"]:
             raise RuntimeError(f"{p.name} has no audio.")
         for tr in info["tracks"]:
@@ -168,9 +168,9 @@ class FilesTab:
             raise RuntimeError("Languages other than English need the translator - "
                                "tick it in Setup → Download models.")
         self.track = int(msg.get("track", 0))
-        job = DubJob(path=self.info["path"], targets=targets,
-                     output=msg.get("output", "add") if msg.get("output") in ("separate", "add", "replace") else "add",
-                     audio_format=msg.get("audio_format") if msg.get("audio_format") in ("mp3", "m4a", "wav") else "mp3",
+        output = msg.get("output") if msg.get("output") in ("separate", "add", "replace") else "add"
+        fmt = msg.get("audio_format") if msg.get("audio_format") in ("mp3", "m4a", "wav") else "mp3"
+        job = DubJob(path=self.info["path"], targets=targets, output=output, audio_format=fmt,
                      track=int(msg.get("track", 0)), source_lang=source,
                      keep_background=bool(msg.get("keep_background")),
                      subtitles=bool(msg.get("subtitles", True)),

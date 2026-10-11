@@ -2,7 +2,7 @@
 
 Takes the files git tracks (so commit first: the installer ships exactly what
 is committed, never stray local files), leaves out what users don't need
-(tests, docs, installer sources), and adds the freshly built Ominvox.exe.
+(tests, docs, installer sources, contributor files), and adds the freshly built Ominvox.exe.
 """
 from __future__ import annotations
 import subprocess
@@ -13,12 +13,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / ".cache" / "build" / "payload.zip"
 SKIP_DIRS = ("tests/", "docs/", "installer/", ".github/")
+# Contributor-only files (LICENSE and NOTICE do ship: the licence requires them).
+SKIP_FILES = {"CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "pyproject.toml",
+              "requirements-ci.txt", ".editorconfig", ".gitattributes", ".gitignore"}
 
 
 def main() -> int:
     files = subprocess.run(["git", "ls-files", "--cached"], cwd=ROOT,
                            capture_output=True, text=True, check=True).stdout.splitlines()
-    files = [f for f in files if not f.startswith(SKIP_DIRS) and (ROOT / f).is_file()]
+    files = [f for f in files if not f.startswith(SKIP_DIRS) and f not in SKIP_FILES and (ROOT / f).is_file()]
     exe = ROOT / "Ominvox.exe"
     if not exe.is_file():
         print("Ominvox.exe missing - build the launcher first.", file=sys.stderr)

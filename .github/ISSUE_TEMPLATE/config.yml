@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/KrishnaVaibhav/Ominvox/security/advisories/new
+    about: Please report security problems privately, not as an issue.
+  - name: Setup help (README)
+    url: https://github.com/KrishnaVaibhav/Ominvox#7-troubleshooting
+    about: Most install and audio problems are covered in Troubleshooting.

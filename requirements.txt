@@ -1,5 +1,5 @@
-# Ominvox — Python deps. Install into the project-local venv (.venv) via setup.bat.
-# GPU: install a CUDA torch build matching your driver (see setup.bat note).
+# Ominvox - Python dependencies. setup.ps1 installs them into the project-local
+# .venv312 (and installs the CUDA build of PyTorch separately, see below).
 
 # core
 numpy>=1.26
@@ -10,7 +10,7 @@ soundfile>=0.12
 PyAudioWPatch>=0.2.12.6 ; sys_platform == "win32"
 
 # NOTE: torch / torchaudio are NOT listed here on purpose.
-# They are installed separately (CUDA build) at the end of setup_conda.bat so a
+# setup.ps1 installs them separately (CUDA 12.4 build) at the end, so a
 # plain-PyPI resolve can't silently replace the GPU build with a CPU one.
 
 # STT

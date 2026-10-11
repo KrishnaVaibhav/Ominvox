@@ -1,8 +1,15 @@
 # Ominvox
 
+[![CI](https://github.com/KrishnaVaibhav/Ominvox/actions/workflows/ci.yml/badge.svg)](https://github.com/KrishnaVaibhav/Ominvox/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/KrishnaVaibhav/Ominvox/actions/workflows/codeql.yml/badge.svg)](https://github.com/KrishnaVaibhav/Ominvox/actions/workflows/codeql.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-informational)
+
 Live, **local** audio translation with **per-speaker voice matching**. Ominvox listens to whatever is playing on your Windows PC (a movie, a YouTube video, a call), translates the dialogue live, and speaks it back. Each speaker on screen gets their own cloned voice in the new language.
 
 Everything runs on your own computer: no cloud service, no subscription. The program, its Python environment and all AI models stay inside the folder you install it to.
+
+It can also translate **audio and video files** into one or many languages: as new audio tracks in the video, as a replacement soundtrack, or as separate audio files (see [Translate an audio or video file](#translate-an-audio-or-video-file)).
 
 ---
 
@@ -361,6 +368,7 @@ installer\
   make_icon.py           draws assets\ominvox.ico
 scripts\                 build_exe.bat, audiotest/devices/check.bat, setup_conda.bat
 tests\                   test suites + run_all.py
+.github\                 CI, CodeQL and release workflows, issue / PR templates, Dependabot
 docs\                    project plan, history
 setup.ps1                environment setup (used by the installer and manual installs)
 run.bat / start_ui.bat   launchers with caches pinned
@@ -373,7 +381,7 @@ scripts\build_exe.bat            REM Ominvox.exe + dist\OminvoxSetup.exe
 scripts\build_exe.bat launcher   REM only Ominvox.exe
 ```
 
-`OminvoxSetup.exe` embeds every **committed** file except `tests\`, `docs\` and `installer\`, plus the freshly built `Ominvox.exe`, so commit before building a release. For scripted installs: `OminvoxSetup.exe --silent --dir D:\Ominvox [--no-shortcuts]` (progress in `logs\install.log`).
+`OminvoxSetup.exe` embeds every **committed** file except `tests\`, `docs\`, `installer\` and the contributor files, plus the freshly built `Ominvox.exe`, so commit before building a release. Official releases are built by GitHub Actions when a version tag is pushed (see [docs/MAINTAINING.md](docs/MAINTAINING.md)). For scripted installs: `OminvoxSetup.exe --silent --dir D:\Ominvox [--no-shortcuts]` (progress in `logs\install.log`).
 
 ### Notes
 
@@ -410,6 +418,19 @@ set OMINVOX_TEST_DEVICE=LG ULTRAGEAR
 set OMINVOX_TEST_OUTPUT=Realtek
 ```
 
+### Contributing
+
+Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, code style and how tests and pull requests work, and the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately ([SECURITY.md](SECURITY.md)). Maintainer notes: [docs/MAINTAINING.md](docs/MAINTAINING.md).
+
 ### Licences
 
-The XTTS-v2 voice model is released under the **Coqui Public Model License** (non-commercial use only); the app asks the user to agree before downloading or using it. The pyannote models are subject to their own terms on Hugging Face, which the user accepts there.
+The Ominvox code is licensed under the **[Apache License 2.0](LICENSE)**. Copyright 2026 Krishna Vaibhav; see [NOTICE](NOTICE).
+
+The AI models aren't part of this repository. Ominvox downloads them on first run, and each keeps its own licence:
+
+- **XTTS-v2** (voice): Coqui Public Model License, **non-commercial use only**. The app asks you to agree before downloading or using it.
+- **NLLB-200** (translation to languages other than English): CC-BY-NC 4.0, **non-commercial use only**.
+- **pyannote** speaker models: MIT and CC-BY 4.0, gated on Hugging Face (you accept their terms there).
+- **Whisper** (faster-whisper) and **Silero VAD**: MIT.
+
+So while the code is free for any use, **using Ominvox with these models is limited to non-commercial use**.
