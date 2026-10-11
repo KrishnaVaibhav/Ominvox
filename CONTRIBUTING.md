@@ -54,7 +54,9 @@ See [README → For developers](README.md#9-for-developers) for the full map. In
 2. Keep the change focused - one fix or feature per pull request.
 3. Match the surrounding code: same naming, same comment style (comments say
    *why*, not *what*), no new dependency unless it's really needed.
-4. If you change behaviour users see, update the README in the same PR.
+4. If you change behaviour users see, update the README in the same PR. If the
+   screens look different, retake the pictures: `.venv312\Scripts\python.exe docs\screenshots.py`
+   (needs the models; takes about 10 minutes, and plays no sound).
 5. Add or update a test (see below).
 
 ### Code style

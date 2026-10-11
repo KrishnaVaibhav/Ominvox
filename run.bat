@@ -11,7 +11,7 @@ set "PYTHONIOENCODING=utf-8"
 if not exist "%ROOT%.venv312\Scripts\python.exe" (
   echo.
   echo  Ominvox is not installed yet.
-  echo  Run the setup first ^(see README step 6^):
+  echo  Run the setup first ^(see README section 2^):
   echo      powershell -ExecutionPolicy Bypass -File setup.ps1
   echo.
   exit /b 1
