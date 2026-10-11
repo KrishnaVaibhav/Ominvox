@@ -160,7 +160,7 @@ async def ws_set_config():
             "voice_mode": "single",
             "delay_ms": 2000,
         }))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)        # let the server read it before we disconnect
     # fresh connection -- initial msg should reflect new values
     async with websockets.connect(WS_URL, open_timeout=5) as ws2:
         raw = await asyncio.wait_for(ws2.recv(), timeout=5)

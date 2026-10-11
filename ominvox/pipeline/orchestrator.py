@@ -20,12 +20,8 @@ import time
 import numpy as np
 
 from ..audio.capture import LoopbackCapture
-from .vad import VAD
-from .diarize import Diarizer
-from .stt import STT
-from .mt import Translator
-from .voices import VoiceSynth
 from ..audio.player import Player
+from .engine import Engine
 from .speaker_id import VoiceProfileStore
 from .metrics import Metrics
 
@@ -43,24 +39,15 @@ def voiced_seconds(audio: np.ndarray, sr: int) -> float:
 
 
 class Pipeline:
-    def __init__(self, cfg: dict, log=print, notify=None):
+    def __init__(self, cfg: dict, log=print, notify=None, engine: Engine | None = None):
         self.cfg = cfg
         self.log = log
         self._notify = notify or (lambda _evt: None)
         self.capture = LoopbackCapture.from_cfg(cfg)
         log("Loading models…")
-        self.vad = VAD(cfg["audio"]["sample_rate"])
-        self.diar = Diarizer(cfg)
-        self.stt = STT(cfg)
-        self.mt = Translator(cfg)
-        self.synth = VoiceSynth(cfg)
-        if self.diar.enabled and self.diar.pipeline is None:
-            log("Speaker separation is OFF (Hugging Face token missing or not accepted) "
-                "- everyone will share one voice. Open Setup to add it.")
-        if self.synth.tts is None:
-            log("Voice is OFF (licence not agreed) - translations are shown as text. Open Setup to turn it on.")
+        self.engine = engine or Engine(cfg, log=log)
+        self.engine.load_all()
         self.metrics = Metrics()
-        self._warmup()
         self.player = Player(cfg, on_play=self._on_play)
         self._ids = itertools.count(1)
         log("Pipeline ready — play your movie.")
@@ -85,23 +72,12 @@ class Pipeline:
         # embeddings (measured: one-word lines have <= 1.45 s of voiced audio).
         self._min_id_seconds = float(sid_cfg.get("min_seconds", 1.6))
 
-    def _warmup(self):
-        """Run every model once so the first real line isn't slowed by CUDA kernel
-        compilation / lazy loading (measured: first line 13.5 s vs ~5.5 s after)."""
-        self.log("Warming up models…")
-        sr = self.cfg["audio"]["sample_rate"]
-        noise = (np.random.default_rng(0).standard_normal(sr * 2) * 0.01).astype(np.float32)
-        for name, fn in (
-            ("speaker ID", lambda: self.diar.label_and_embed(noise)),
-            ("speech-to-text", lambda: self.stt.transcribe(noise)),
-            ("translation", lambda: self.mt.translate_ex("Hello there.", "en")
-                if not self.mt.whisper_handles() else None),
-            ("voice", lambda: self.synth.speak("Hello there.", "__warmup__")),
-        ):
-            try:
-                fn()
-            except Exception as exc:
-                self.log(f"Warm-up of {name} failed ({exc}) - continuing.")
+    # The models live in the shared Engine (file translation uses them too).
+    vad = property(lambda self: self.engine.vad)
+    diar = property(lambda self: self.engine.diar)
+    stt = property(lambda self: self.engine.stt)
+    mt = property(lambda self: self.engine.mt)
+    synth = property(lambda self: self.engine.synth)
 
     # ------------------------------------------------------------------
     # Segment accumulator (runs in main thread)
@@ -279,10 +255,10 @@ class Pipeline:
         return True
 
     def reload_diarizer(self):
-        self.diar = Diarizer(self.cfg)
+        self.engine.reload_diarizer()
 
     def reload_voice(self):
-        self.synth = VoiceSynth(self.cfg)
+        self.engine.reload_voice()
 
     def reset_speakers(self):
         self.profiles.clear()

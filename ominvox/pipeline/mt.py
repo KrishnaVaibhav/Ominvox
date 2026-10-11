@@ -4,6 +4,7 @@
  - 'whisper': always Whisper translate (STT task=translate) - English output only
  - 'nllb'   : always NLLB-200 (transcribe in the source language, then translate)"""
 from __future__ import annotations
+import re
 import sys
 import threading
 
@@ -29,6 +30,25 @@ _NLLB = {
     "vi": "vie_Latn", "th": "tha_Thai", "id": "ind_Latn", "ms": "zsm_Latn",
     "tl": "tgl_Latn", "sw": "swh_Latn", "ca": "cat_Latn",
 }
+
+
+# Sentence ends: . ! ? followed by a space, or CJK 。！？ (no space after those).
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|(?<=[。！？])\s*")
+
+
+def split_sentences(text: str) -> list[str]:
+    return [p for p in _SENTENCE_END.split(text.strip()) if p]
+
+
+def clean_output(text: str) -> str:
+    """NLLB learned from film subtitles: on short input it adds dialogue dashes
+    and repeats itself ("- Gracias. - Gracias."). Drop both."""
+    out: list[str] = []
+    for part in split_sentences(text.replace(" - ", " ")):
+        part = part.strip().lstrip("-–— ").strip()
+        if part and (not out or part.lower() != out[-1].lower()):
+            out.append(part)
+    return " ".join(out)
 
 
 class Translator:
@@ -72,7 +92,7 @@ class Translator:
             if self.model is not None:
                 return True
             name = self._cfg["mt"]["nllb_model"]
-            print(f"[mt] loading {name} for '{self.target}' (first use only)...", flush=True)
+            print(f"[mt] loading {name} (first use only)...", flush=True)
             try:
                 self.tok = AutoTokenizer.from_pretrained(name)
                 # use_safetensors=False: otherwise transformers also downloads an
@@ -92,20 +112,48 @@ class Translator:
         return self.translate_ex(text, src_lang)[0]
 
     def translate_ex(self, text: str, src_lang: str) -> tuple[str, str]:
-        """Return (text, language_it_is_in). Falls back to the source text
-        (and source language) when translation isn't possible."""
+        """Return (text, language_it_is_in) for the live target. Falls back to the
+        source text (and source language) when translation isn't possible."""
         if self.whisper_handles():
             return text, "en"          # Whisper already produced English
-        if not text or src_lang == self.target:
-            return text, src_lang
-        tgt_code = _NLLB.get(self.target)
+        out = self.translate_batch([text], src_lang, self.target)
+        return (out[0], self.target) if out is not None else (text, src_lang)
+
+    @staticmethod
+    def supports(code: str) -> bool:
+        return code in _NLLB
+
+    def translate_batch(self, texts: list[str], src_lang: str, tgt_lang: str,
+                        batch_size: int = 16, beams: int = 1) -> list[str] | None:
+        """Translate many lines into `tgt_lang` with NLLB (batched: much faster
+        than one line at a time). None if NLLB can't do it. `beams` > 1 is a
+        little more accurate and slower (used for files)."""
+        if src_lang == tgt_lang:
+            return list(texts)
+        tgt_code = _NLLB.get(tgt_lang)
         if tgt_code is None or not self._ensure_nllb():
-            return text, src_lang
+            return None
         self.tok.src_lang = _NLLB.get(src_lang, "eng_Latn")
-        enc = self.tok(text, return_tensors="pt")
-        if torch.cuda.is_available():
-            enc = {k: v.to("cuda") for k, v in enc.items()}
         tgt_id = self.tok.convert_tokens_to_ids(tgt_code)
-        with torch.inference_mode():
-            out = self.model.generate(**enc, forced_bos_token_id=tgt_id, max_new_tokens=256)
-        return self.tok.batch_decode(out, skip_special_tokens=True)[0], self.target
+        # NLLB often translates only one sentence of a multi-sentence input, so
+        # every sentence is translated on its own and the lines are rebuilt.
+        sents, owner = [], []
+        for i, t in enumerate(texts):
+            for sent in split_sentences(t or ""):
+                sents.append(sent)
+                owner.append(i)
+        done: list[str] = []
+        for k in range(0, len(sents), batch_size):
+            enc = self.tok(sents[k:k + batch_size], return_tensors="pt", padding=True,
+                           truncation=True, max_length=256)
+            if torch.cuda.is_available():
+                enc = {key: v.to("cuda") for key, v in enc.items()}
+            with torch.inference_mode():
+                gen = self.model.generate(**enc, forced_bos_token_id=tgt_id,
+                                          max_new_tokens=256, num_beams=beams)
+            done += [clean_output(t) for t in self.tok.batch_decode(gen, skip_special_tokens=True)]
+        out: list[list[str]] = [[] for _ in texts]
+        for i, text in zip(owner, done):
+            out[i].append(text.strip())
+        joiner = "" if tgt_lang in ("zh", "ja") else " "
+        return [joiner.join(parts) for parts in out]

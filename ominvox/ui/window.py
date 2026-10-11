@@ -33,8 +33,9 @@ def run_window(srv: UIServer, host: str = "127.0.0.1", port: int = 8765) -> None
         url = f"http://{host}:{port}"
     print(f"Ominvox UI -> {url}")
 
-    webview.create_window("Ominvox", url, width=1440, height=900, min_size=(960, 620),
-                          background_color="#0d0f1a")
+    from . import dialogs
+    dialogs.window = webview.create_window("Ominvox", url, width=1440, height=900,
+                                           min_size=(960, 620), background_color="#0d0f1a")
     try:
         webview.start()
     except Exception as exc:

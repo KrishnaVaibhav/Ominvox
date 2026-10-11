@@ -61,6 +61,12 @@ vad:
   silence_chunks: 4            # 4 × 250ms = 1.0s silence before flushing (was 5×1000ms=5s)
   max_segment_s: 8.0           # force-cut an utterance at this length (avoids unbounded buffers)
 
+files:
+  # Translating whole audio / video files (the Files tab, or run.bat --dub FILE).
+  max_speedup: 1.35            # a translation longer than the original line is spoken up to
+                               # this much faster so it ends before the next line starts
+  background_volume: 0.3       # "keep the original sound underneath": its volume (0-1)
+
 speaker_id:
   threshold: 0.62              # cosine similarity floor for voice-profile matching
   # Tuned on a 4-voice dialogue (7 renders): fewest splits + merges at 0.62.

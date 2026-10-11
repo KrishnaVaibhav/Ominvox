@@ -39,6 +39,7 @@ function connect() {
       case 'models': setupModels(m); break;
       case 'fr_token_checking': setupTokenChecking(); break;
       case 'need_setup': openSetup(true); break;
+      default: if (m.type.startsWith('file_')) filesMessage(m);   // files.js
     }
   };
   ws.onclose = () => { setStatus('stopped'); setLog('Disconnected — retrying in 3 s…'); setTimeout(connect, 3000); };
@@ -54,11 +55,11 @@ function handleStatus(m) {
 }
 function setStatus(state) {
   pipelineState = state;
-  $('status-chip').className = 'status-chip ' + state;
+  ['running', 'loading', 'stopped'].forEach(c => $('status-chip').classList.toggle(c, c === state));
   $('status-label').textContent = state === 'running' ? 'Listening' : state === 'loading' ? 'Loading models…' : 'Stopped';
   const b = $('main-btn');
   b.textContent = state === 'running' ? 'Stop' : state === 'loading' ? 'Cancel' : 'Start Listening';
-  b.className = 'btn-primary' + (state !== 'stopped' ? ' danger' : '');
+  b.classList.toggle('danger', state !== 'stopped');     // keep other classes (live-only)
   $('check-input-btn').disabled = state !== 'stopped';
   if (state !== 'running') updateLevel(0);
 }

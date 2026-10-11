@@ -189,13 +189,8 @@ class VoiceSynth:
         `language` is the language `text` is actually in (defaults to the target)."""
         if not text or self.tts is None:
             return None
-        lang = xtts_lang(language or self.target)
+        lang = self._lang_or_warn(language or self.target)
         if lang is None:
-            code = language or self.target
-            if code not in self._warned_langs:
-                self._warned_langs.add(code)
-                print(f"[tts] XTTS cannot speak '{code}' - showing text only. "
-                      f"Supported: {', '.join(sorted(XTTS_LANGS))}", file=sys.stderr)
             return None
 
         voice = self._voice_for(speaker)
@@ -205,18 +200,10 @@ class VoiceSynth:
 
         latents = self._latents_for(kind, value, speaker)
         if latents is not None:
-            try:
-                gpt_latent, spk_embed = latents
-                out = self.tts.synthesizer.tts_model.inference(
-                    text=text,
-                    language=lang,
-                    gpt_cond_latent=gpt_latent,
-                    speaker_embedding=spk_embed,
-                    temperature=0.7,
-                )
-                return np.asarray(out["wav"], dtype=np.float32)
-            except Exception:
-                pass  # fall through to the high-level API if the low-level one changed
+            wav = self.speak_latents(text, lang, latents)
+            if wav is not None:
+                return wav
+            # fall through to the high-level API if the low-level one changed
 
         # Fallback: high-level API (slower, no latent cache)
         if kind == "builtin":
@@ -224,3 +211,56 @@ class VoiceSynth:
         else:
             wav = self.tts.tts(text=text, speaker_wav=value, language=lang)
         return np.asarray(wav, dtype=np.float32)
+
+    def _lang_or_warn(self, code: str) -> str | None:
+        lang = xtts_lang(code)
+        if lang is None and code not in self._warned_langs:
+            self._warned_langs.add(code)
+            print(f"[tts] XTTS cannot speak '{code}' - showing text only. "
+                  f"Supported: {', '.join(sorted(XTTS_LANGS))}", file=sys.stderr)
+        return lang
+
+    def speak_latents(self, text: str, lang: str, latents: tuple, speed: float = 1.0,
+                      split: bool = False) -> np.ndarray | None:
+        """Speak with given conditioning latents. `lang` is an XTTS code; `split`
+        breaks long text into sentences (XTTS degrades past ~250 characters)."""
+        if not text or self.tts is None:
+            return None
+        try:
+            gpt_latent, spk_embed = latents
+            out = self.tts.synthesizer.tts_model.inference(
+                text=text, language=lang, gpt_cond_latent=gpt_latent,
+                speaker_embedding=spk_embed, temperature=0.7, speed=speed,
+                enable_text_splitting=split)
+            return np.asarray(out["wav"], dtype=np.float32)
+        except Exception:
+            return None
+
+    # ── voices for file translation ───────────────────────────
+
+    def latents_from_audio(self, audio: np.ndarray, sr: int, name: str) -> tuple | None:
+        """Clone a voice from a clip (file translation: one per detected speaker).
+        Not cached in the live registry, so files never change live voices."""
+        if self.tts is None or not len(audio):
+            return None
+        folder = self.registry.dir / "_files"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{safe_filename(name)}.wav"
+        sf.write(path, audio, sr)
+        try:
+            c = self.tts.synthesizer.tts_config
+            return self.tts.synthesizer.tts_model.get_conditioning_latents(
+                audio_path=[str(path)], gpt_cond_len=c.gpt_cond_len,
+                max_ref_length=c.max_ref_len, sound_norm_refs=c.sound_norm_refs)
+        except Exception:
+            return None
+        finally:
+            path.unlink(missing_ok=True)
+
+    def preset_latents(self, speaker: str) -> tuple | None:
+        """Latents for the configured preset / built-in voice of `speaker`
+        (used when the voice mode isn't "match each speaker")."""
+        if self.tts is None:
+            return None
+        voice = self._voice_for(speaker)
+        return self._latents_for(*voice, speaker) if voice else None

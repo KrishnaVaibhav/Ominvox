@@ -7,26 +7,30 @@ as the movie plays.
 from __future__ import annotations
 import asyncio
 import json
+import shutil
 import threading
 import time
 import webbrowser
 from pathlib import Path
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.responses import HTMLResponse, JSONResponse, Response
     import uvicorn
 except ImportError:
-    FastAPI = WebSocket = WebSocketDisconnect = HTMLResponse = JSONResponse = Response = uvicorn = None  # type: ignore
+    FastAPI = Request = WebSocket = WebSocketDisconnect = HTMLResponse = JSONResponse = Response = uvicorn = None  # type: ignore
 
 from .. import config as config_mod
+from ..pipeline.engine import Engine
 from ..pipeline.orchestrator import Pipeline
+from ..pipeline.voices import safe_filename
 from ..pipeline.speaker_id import VoiceProfileStore
 from ..audio.capture import LoopbackCapture
 from ..audio.devices import enumerate_devices
 from ..pipeline.metrics import Metrics
 from ..audio.player import Player
 from .onboarding import Onboarding
+from .files_tab import FilesTab
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _HTML = (WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -67,6 +71,10 @@ class UIServer:
         self._resolve_saved_devices()
         self.onboarding = Onboarding(cfg, emit=self._emit, log=self._log, persist=persist,
                                      on_token=self._reload_diarizer, on_license=self._reload_voice)
+        # Models are shared by live listening and the Files tab (loaded on first use).
+        self.engine = Engine(cfg, log=self._log)
+        self.files = FilesTab(cfg, self.engine, self.onboarding, emit=self._emit, log=self._log,
+                              persist=persist, is_live=lambda: self._state != "stopped")
 
     # ── broadcast ────────────────────────────────────────────
 
@@ -98,11 +106,15 @@ class UIServer:
         """Build the pipeline (loads all models) once, then reuse it. Start/Stop
         only toggle listening, so models are NOT reloaded and VRAM isn't re-grabbed."""
         if self._pipeline is None:
-            self._pipeline = Pipeline(self.cfg, log=self._log, notify=self._emit)
+            self._pipeline = Pipeline(self.cfg, log=self._log, notify=self._emit, engine=self.engine)
         return self._pipeline
 
     def _start_pipeline(self):
         if self._start_lock.locked():
+            return
+        if self.files.running:
+            self._emit({"type": "status", "state": "stopped"})
+            self._log("A file is being translated - wait for it to finish (or cancel it) first.")
             return
         if not self.onboarding.ready():
             # Never start into a silent multi-GB download: finish setup first.
@@ -152,21 +164,23 @@ class UIServer:
     def _reload_diarizer(self):
         """A working token arrived after the models were loaded: turn speaker
         separation on without restarting the app."""
-        pipe = self._pipeline
-        if pipe and pipe.diar.pipeline is None:
-            threading.Thread(target=lambda: (pipe.reload_diarizer(),
+        diar = self.engine.diar_loaded
+        if diar is not None and diar.pipeline is None:
+            threading.Thread(target=lambda: (self.engine.reload_diarizer(),
                                              self._log("Speaker separation is on.")),
                              daemon=True).start()
 
     def _reload_voice(self):
-        pipe = self._pipeline
-        if pipe and pipe.synth.tts is None and self.cfg["tts"].get("license_accepted"):
+        synth = self.engine.synth_loaded
+        if synth is not None and synth.tts is None and self.cfg["tts"].get("license_accepted"):
             threading.Thread(target=lambda: (self._log("Loading the voice model..."),
-                                             pipe.reload_voice(), self._log("Voice is on.")),
+                                             self.engine.reload_voice(), self._log("Voice is on.")),
                              daemon=True).start()
 
     def shutdown(self):
         self._level_stop.set()
+        if self.files._job:
+            self.files._job.cancel()
         self._stop_probe()
         if self._pipeline:
             try:
@@ -440,12 +454,33 @@ class UIServer:
             return Response(f.read_bytes(), media_type=STATIC_TYPES[f.suffix],
                             headers={"Cache-Control": "no-cache"})
 
+        @app.put("/api/upload")
+        async def upload(request: Request, name: str = "upload"):
+            """A file dropped on the Files tab (the page can't see its real path)."""
+            if not self._same_origin(request.headers.get("origin")):
+                return Response(status_code=403)
+            if self.files.running:       # the job may be reading the previous upload
+                return Response(status_code=409)
+            folder = self.files.uploads
+            await asyncio.to_thread(lambda: (shutil.rmtree(folder, ignore_errors=True),
+                                             folder.mkdir(parents=True, exist_ok=True)))
+            dst = folder / safe_filename(Path(name).name)
+            with open(dst, "wb") as f:
+                async for chunk in request.stream():
+                    f.write(chunk)
+            return JSONResponse({"path": str(dst)})
+
         @app.get("/api/health")
         async def health():
             return JSONResponse({"app": APP_ID, "state": self._state})
 
         @app.websocket("/ws")
         async def ws_handler(websocket: WebSocket):
+            # Only this app's own page may connect: any web page in the browser
+            # could otherwise reach 127.0.0.1 and drive the app.
+            if not self._same_origin(websocket.headers.get("origin")):
+                await websocket.close(code=1008)
+                return
             await websocket.accept()
             self._clients.append(websocket)
             # Send initial state + config + known speakers on connect
@@ -456,6 +491,7 @@ class UIServer:
                 "speakers": self._store().list_profiles(),
             }))
             await websocket.send_text(json.dumps(await asyncio.to_thread(self.onboarding.state)))
+            await websocket.send_text(json.dumps(await asyncio.to_thread(self.files.state)))
             spawn = lambda fn: threading.Thread(target=fn, daemon=True).start()  # noqa: E731
             try:
                 while True:
@@ -463,6 +499,8 @@ class UIServer:
                     t = msg.get("type")
                     if t.startswith("fr_") or t == "open_url":
                         spawn(lambda m=msg: self.onboarding.handle(m))
+                    elif t.startswith("file_"):
+                        spawn(lambda m=msg: self.files.handle(m))
                     elif t == "start":
                         spawn(self._start_pipeline)
                     elif t == "stop":
@@ -493,6 +531,15 @@ class UIServer:
                     pass
 
         return app
+
+    @staticmethod
+    def _same_origin(origin: str | None) -> bool:
+        """True for our own page (http://127.0.0.1:PORT / localhost) or no Origin
+        header (non-browser clients such as the tests)."""
+        if not origin:
+            return True
+        from urllib.parse import urlparse
+        return urlparse(origin).hostname in ("127.0.0.1", "localhost", "::1")
 
     # ── entry points ──────────────────────────────────────────
 

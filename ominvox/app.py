@@ -200,6 +200,44 @@ def audio_test(cfg: dict, seconds: float = 10.0) -> int:
     return 1
 
 
+def dub_file(cfg: dict, args) -> int:
+    """Translate a file from the command line (what the Files tab does)."""
+    from .pipeline.engine import Engine
+    from .files.dubber import Dubber, DubJob
+    from .files import media
+
+    info = media.probe(args.dub)
+    print(f"{info['name']}: {info['kind']}, {info['duration'] / 60:.1f} min, "
+          f"{len(info['tracks'])} audio track(s)")
+    engine = Engine(cfg)
+    last = [""]
+
+    def show(p):
+        line = f"  {p['pct'] * 100:5.1f}%  {p['stage']}"
+        if line != last[0]:
+            last[0] = line
+            print(line, flush=True)
+
+    d = Dubber(engine, cfg, on_progress=show)
+    targets = [t.strip() for t in args.to.split(",") if t.strip()]
+    if targets == ["all"]:
+        from .files.languages import VOICE_LANGS
+        src = args.source or d.detect(args.dub, args.track)["lang"]
+        targets = [c for c in VOICE_LANGS if c != src]
+    job = DubJob(path=args.dub, targets=targets, output=args.output_mode,
+                 audio_format=args.audio_format, track=args.track, source_lang=args.source,
+                 keep_background=args.keep_background, subtitles=not args.no_subtitles,
+                 out_dir=args.out)
+    try:
+        outputs = d.run(job)
+    except RuntimeError as exc:
+        print(f"Failed: {exc}")
+        return 1
+    for o in outputs:
+        print(f"  -> {o['path']}")
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="ominvox")
     p.add_argument("--config", default=None)
@@ -226,10 +264,23 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true", help="don't open browser on UI start")
     p.add_argument("--window", action="store_true",
                    help="start the UI in its own app window (what Ominvox.exe runs)")
+    g = p.add_argument_group("translate a file")
+    g.add_argument("--dub", metavar="FILE", help="translate an audio or video file")
+    g.add_argument("--to", default="en", help="target languages, e.g. es,fr or all")
+    g.add_argument("--source", default=None, help="spoken language (default: detect)")
+    g.add_argument("--track", type=int, default=0, help="audio track number (0 = first)")
+    g.add_argument("--output-mode", choices=("separate", "add", "replace"), default="separate",
+                   help="video: separate audio files, add tracks, or replace the audio")
+    g.add_argument("--audio-format", choices=("mp3", "m4a", "wav"), default="mp3")
+    g.add_argument("--keep-background", action="store_true",
+                   help="keep the original sound quietly under the new voice")
+    g.add_argument("--no-subtitles", action="store_true", help="don't write .srt files")
+    g.add_argument("--out", default=None, help="output folder (default: <file folder>/Ominvox)")
     args = p.parse_args(argv)
 
-    # The UI remembers choices made in it (user_settings.json); CLI modes don't.
-    cfg = config.load(args.config, user_settings=args.ui or args.window)
+    # The UI remembers choices made in it (user_settings.json); --dub uses them too
+    # (voice licence, speaker settings). Other CLI modes don't.
+    cfg = config.load(args.config, user_settings=bool(args.ui or args.window or args.dub))
     if args.target:
         cfg["translate"]["target_lang"] = args.target
 
@@ -239,6 +290,8 @@ def main(argv=None):
         return audio_test(cfg, seconds=args.audio_seconds)
     if args.check:
         return selftest(cfg)
+    if args.dub:
+        return dub_file(cfg, args)
     if args.spike:
         return spike(cfg, window_s=args.spike_window, translate=args.translate,
                      max_seconds=args.spike_seconds)

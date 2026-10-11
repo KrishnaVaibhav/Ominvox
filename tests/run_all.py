@@ -17,8 +17,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 GROUPS = {
-    "fast":  ["test_metrics.py", "test_firstrun.py", "test_speaker_id.py"],
-    "gpu":   ["test_pipeline.py", "test_comprehensive.py", "test_e2e.py", "test_real_voices.py"],
+    "fast":  ["test_metrics.py", "test_firstrun.py", "test_speaker_id.py", "test_files_unit.py"],
+    "gpu":   ["test_pipeline.py", "test_comprehensive.py", "test_e2e.py", "test_real_voices.py",
+              "test_files.py"],
     "sound": ["test_audio_devices.py", "test_live_ui.py"],
 }
 

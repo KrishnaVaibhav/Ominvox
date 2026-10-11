@@ -10,16 +10,20 @@
 
 <header>
   <div class="logo"><div class="logo-glyph">◈</div>OMINVOX</div>
-  <div class="status-chip" id="status-chip"><div class="status-dot"></div><span id="status-label">Stopped</span></div>
-  <div class="lag-pill tabular" id="lag-pill" title="How far the translated voice trails the original speech (last line)">
+  <div class="seg mode-seg" id="mode-seg" role="tablist">
+    <button data-mode="live" class="on" title="Translate what is playing on your PC, as it plays">Live</button>
+    <button data-mode="files" title="Translate an audio or video file into one or more languages">Files</button>
+  </div>
+  <div class="status-chip live-only" id="status-chip"><div class="status-dot"></div><span id="status-label">Stopped</span></div>
+  <div class="lag-pill tabular live-only" id="lag-pill" title="How far the translated voice trails the original speech (last line)">
     <span class="ov-dot" id="lag-pill-dot"></span>Lag <b id="lag-pill-val">–</b>
   </div>
   <div class="hdr-spacer"></div>
-  <button class="btn-primary" id="main-btn">Start Listening</button>
+  <button class="btn-primary live-only" id="main-btn">Start Listening</button>
   <button class="btn-sm" id="setup-btn" title="System check, voice licence, token and downloads">Setup</button>
-  <button class="btn-icon" id="clear-btn" title="Clear transcript">⌫</button>
-  <button class="btn-icon active" id="left-btn" title="Show / hide audio &amp; settings panel">⚙</button>
-  <button class="btn-icon active" id="right-btn" title="Show / hide performance &amp; speakers panel">📊</button>
+  <button class="btn-icon live-only" id="clear-btn" title="Clear transcript">⌫</button>
+  <button class="btn-icon active live-only" id="left-btn" title="Show / hide audio &amp; settings panel">⚙</button>
+  <button class="btn-icon active live-only" id="right-btn" title="Show / hide performance &amp; speakers panel">📊</button>
 </header>
 
 <div class="layout" id="layout">
@@ -56,7 +60,7 @@
         <span class="ico">!</span>
         <span>Input and output are the <b>same device</b>, so the translation will be picked up
           and translated again. Send the output to headphones or another device
-          (or use a virtual cable — see README section 8).</span>
+          (or use a virtual cable — see README section 5).</span>
       </div>
     </div>
 
@@ -124,7 +128,7 @@
                 (Or press <b>J</b> / <b>K</b> to move it in 50 ms steps.)</li>
               <li><b>MPC-HC / MPC-BE:</b> Options → Internal Filters → Audio Switcher → enable
                 <i>Time shift</i> and enter the value in milliseconds.</li>
-              <li>This works best with the movie's own sound going to a virtual cable (README section 8),
+              <li>This works best with the movie's own sound going to a virtual cable (README section 5),
                 so you hear only the translation.</li>
             </ol>
           </details>
@@ -240,6 +244,116 @@
   </aside>
 </div>
 
+<!-- ── Files tab (files.js) ── -->
+<div class="files-view" id="files-view" hidden>
+  <section class="fv-form">
+    <div class="drop" id="drop">
+      <div class="drop-ico">⇪</div>
+      <b>Drop an audio or video file here</b>
+      <span class="hint">MP3, WAV, M4A, FLAC · MP4, MKV, MOV, AVI, WebM …</span>
+      <button class="btn-sm apply" id="pick-btn">Choose file…</button>
+      <span class="hint" id="drop-msg"></span>
+    </div>
+
+    <div class="file-card" id="file-card" hidden>
+      <div class="fc-ico" id="fc-ico">🎬</div>
+      <div class="fc-main"><b id="fc-name"></b><span class="hint" id="fc-meta"></span></div>
+      <button class="btn-sm" id="change-btn">Change</button>
+    </div>
+
+    <div class="fsec" id="track-sec" hidden>
+      <div class="section-title">Audio track <span class="grow"></span><span class="hint" id="track-count"></span></div>
+      <p class="hint">This video has more than one soundtrack. Pick the one to translate.</p>
+      <div class="track-list" id="track-list"></div>
+    </div>
+
+    <div class="fsec" id="lang-sec" hidden>
+      <div class="section-title">Spoken language</div>
+      <div class="detect" id="detect-out">Detecting…</div>
+      <div class="field" style="margin-top:8px">
+        <label for="src-override">If that's wrong, choose it</label>
+        <select id="src-override"></select>
+      </div>
+    </div>
+
+    <div class="fsec" id="target-sec" hidden>
+      <div class="section-title">Translate into <span class="grow"></span>
+        <button class="link" id="all-btn">Select all</button><button class="link" id="none-btn">Clear</button></div>
+      <div class="chips" id="chips"></div>
+      <div class="callout" id="translator-warn">
+        <span class="ico">!</span>
+        <span>Languages other than English need the translator (2.5 GB, once).
+          <button class="link" id="get-translator">Get it in Setup</button></span>
+      </div>
+    </div>
+
+    <div class="fsec" id="out-sec" hidden>
+      <div class="section-title">Output</div>
+      <div class="out-choices" id="video-out">
+        <label class="choice"><input type="radio" name="out-mode" value="add">
+          <span><b>Add to the video as new audio tracks</b><span class="hint">Keeps the original sound; pick the language in your player.</span></span></label>
+        <label class="choice"><input type="radio" name="out-mode" value="replace">
+          <span><b>Replace the original audio</b><span class="hint">One video per language, with only the new voice.</span></span></label>
+        <label class="choice"><input type="radio" name="out-mode" value="separate">
+          <span><b>Separate audio files</b><span class="hint">The video is left alone; one audio file per language.</span></span></label>
+      </div>
+      <div class="field" id="fmt-field">
+        <label for="fmt-sel">Audio file format</label>
+        <select id="fmt-sel">
+          <option value="mp3">MP3 (plays everywhere)</option>
+          <option value="m4a">M4A / AAC</option>
+          <option value="wav">WAV (uncompressed, large)</option>
+        </select>
+      </div>
+      <label class="check-row"><input type="checkbox" id="opt-bg"> Keep the original sound quietly underneath (music and effects)</label>
+      <label class="check-row"><input type="checkbox" id="opt-srt"> Also save subtitles (.srt)</label>
+      <label class="check-row"><input type="checkbox" id="opt-single"> One voice for everyone (instead of matching each speaker)</label>
+      <div class="field" style="margin-top:12px">
+        <label>Save to</label>
+        <div class="row"><span class="path" id="out-dir">–</span><button class="btn-sm" id="dir-btn">Change…</button></div>
+      </div>
+    </div>
+
+    <div class="fv-actions" id="fv-actions" hidden>
+      <button class="btn-primary" id="dub-btn" disabled>Translate</button>
+      <span class="hint" id="dub-hint"></span>
+    </div>
+  </section>
+
+  <section class="fv-progress">
+    <div class="empty-state" id="fp-empty">
+      <div class="empty-icon">🎞</div>
+      <div><b>Translate a whole file</b></div>
+      <ol class="fp-how">
+        <li>Choose an audio or video file</li>
+        <li>Ominvox detects the language and who is speaking</li>
+        <li>Pick one, several or all languages</li>
+        <li>Each speaker keeps their voice, at the same moment in the video</li>
+      </ol>
+    </div>
+    <div id="fp-body" hidden>
+      <div class="fp-head">
+        <div><div class="hero-label" id="fp-stage">Starting…</div>
+          <div class="hero-num tabular" id="fp-pct">0<small>%</small></div></div>
+        <span class="grow"></span>
+        <button class="btn-sm" id="cancel-btn">Cancel</button>
+      </div>
+      <div class="pbar fp-bar"><div id="fp-bar"></div></div>
+      <div class="hero-sub tabular">
+        <div>Elapsed<b id="fp-elapsed">–</b></div>
+        <div>Time left<b id="fp-eta">–</b></div>
+        <div>Languages<b id="fp-count">–</b></div>
+      </div>
+      <div class="lang-rows" id="fp-langs"></div>
+      <div class="fp-preview" id="fp-preview" hidden></div>
+      <div class="fp-results" id="fp-results" hidden>
+        <div class="section-title">Saved files <span class="grow"></span><button class="btn-sm" id="open-dir-btn">Open folder</button></div>
+        <div id="fp-result-list"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
 <!-- ── First-run setup (setup.js) ── -->
 <div class="modal" id="setup" hidden>
   <div class="setup-card" role="dialog" aria-modal="true" aria-labelledby="setup-title">
@@ -326,5 +440,6 @@
 
 <script src="/static/app.js"></script>
 <script src="/static/setup.js"></script>
+<script src="/static/files.js"></script>
 </body>
 </html>

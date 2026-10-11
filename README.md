@@ -12,6 +12,7 @@ Everything runs on your own computer: no cloud service, no subscription. The pro
 2. [Install](#2-install)
 3. [First start: the setup screen](#3-first-start-the-setup-screen)
 4. [Using Ominvox](#4-using-ominvox)
+   - [Translate an audio or video file](#translate-an-audio-or-video-file)
 5. [Avoid the echo problem (important)](#5-avoid-the-echo-problem-important)
    - [Sync the translation with your video](#sync-the-translation-with-your-video)
 6. [Settings (config.yaml)](#6-settings-configyaml)
@@ -146,6 +147,38 @@ To stop, click **Stop**. To quit, close the window.
 > - **Any other language** uses the NLLB translator (download it in **Setup**). It loads within a few seconds of switching.
 > - The voice can speak English, Spanish, French, German, Italian, Portuguese, Polish, Turkish, Russian, Dutch, Czech, Arabic, Chinese, Hungarian, Korean, Japanese and Hindi. Other languages (such as Swedish) show the translated **text only**.
 
+### Translate an audio or video file
+
+Click **Files** at the top of the window (next to **Live**). Here Ominvox translates a whole file instead of what is playing, and saves the result.
+
+1. **Choose a file**: click **Choose file…** or drag the file onto the window. Audio (MP3, WAV, M4A, FLAC, …) and video (MP4, MKV, MOV, AVI, WebM, …) both work.
+2. **Audio track** (videos with more than one): pick the soundtrack to translate. Ominvox shows each track's language and name. If the first track has no speech (music or effects only), it switches to one that does.
+3. **Spoken language** is detected automatically and shown with how sure it is. If it's wrong, choose the right one.
+4. **Translate into**: click one or more languages, or **Select all** (16 languages).
+5. **Output**:
+
+   | Choice | What you get |
+   |---|---|
+   | **Add to the video as new audio tracks** | One video with the original sound **plus** one track per language. Choose the language in your player (VLC: Audio → Audio Track). |
+   | **Replace the original audio** | One video per language, with only the new voice (`film.es.mp4`, `film.de.mp4`, …). |
+   | **Separate audio files** | One audio file per language (MP3, M4A or WAV). The video isn't touched. Audio files always give this. |
+
+   Options:
+   - **Keep the original sound quietly underneath**: the music and effects stay in. The original voices also stay, softly, because they can't be separated from the music.
+   - **Also save subtitles**: `.srt` files for the original and each language.
+   - **One voice for everyone**: use one voice for all speakers instead of matching each speaker.
+6. Click **Translate**. Progress shows each language, the time left and the line being spoken. When it's done, **Show** opens each file in Explorer.
+
+Results go to an **`Ominvox`** folder next to the file. Use **Change…** to save them somewhere else. Existing files are never overwritten (a second run makes `film.es (2).mp3`). The video picture is copied as it is, never re-encoded, so it keeps its full quality and saving is quick.
+
+How long it takes (measured on an RTX 4070 laptop): about **0.6–1.5 minutes per language for every minute of audio**, plus about 10 seconds per minute to recognise the speech once. It is slower when other programs are using the graphics card. So a 2-hour film takes roughly 1–3 hours per language, and "Select all" is an overnight job. The time-left estimate in the app adjusts as it goes.
+
+Good to know:
+
+- Each line starts **where the original line started**. When a translation is longer than the original, that line is spoken a little faster (up to 1.35×). If it still doesn't fit, the next line starts slightly late. A ⚠ next to a finished language means this happened, and hovering shows by how much.
+- Languages other than English need the translator (**Setup → Download models**, 2.5 GB). English uses Whisper and needs nothing extra.
+- Live listening and file translation share the AI models, so only one can run at a time. **Start Listening** waits until the file is done (or cancelled).
+
 ### Files in the Ominvox folder
 
 | File | What it does |
@@ -168,6 +201,12 @@ run.bat --list-devices       REM show audio devices
 run.bat --audio-test         REM check that sound is being captured
 run.bat --target es          REM run without the UI, translating to Spanish
 run.bat --ui --port 9000     REM use a different port for the web page
+
+REM Translate a file (same as the Files tab):
+run.bat --dub "D:\Movies\film.mkv" --to es,fr --output-mode add
+run.bat --dub talk.mp3 --to all --audio-format m4a --keep-background
+REM   --track 1 (second audio track)   --source ja (skip detection)
+REM   --output-mode separate|add|replace   --no-subtitles   --out D:\Dubbed
 ```
 
 ---
@@ -222,6 +261,8 @@ Most things can be changed in the app. For anything else, open **`config.yaml`**
 | `tts: voice_mode` | Voice style | `match`, `preset`, `single` |
 | `tts: preset_voice` | Path to a `.wav` voice sample (10–30 s of clear speech) for preset mode | `D:\voices\me.wav` |
 | `tts: fallback_voice` | Built-in voice for single mode | `Claribel Dervla`, `Damien Black`, `Ana Florence`, `Andrew Chipper` |
+| `files: max_speedup` | How much faster a translated line may be spoken so it ends before the next one starts | `1.35` (default), `1.0` (never) – `1.6` |
+| `files: background_volume` | Volume of the original sound under the new voice, when that option is on | `0.3` (default), `0`–`1` |
 | `speaker_id: threshold` | How similar two lines must sound to count as the same person. Raise it if different people get merged; lower it if one person gets split. | `0.62` (default), `0.55`–`0.75` |
 | `speaker_id: min_seconds` | Lines with less speech than this (like "No.") are given to the closest known speaker instead of creating a new one | `1.6` |
 | `playback: sync_mode` | `asap` speaks each line as soon as it's ready; `fixed` keeps a constant lag for syncing with the video | `asap` (default), `fixed` |
@@ -294,9 +335,14 @@ ominvox\
     capture.py           loopback / mic capture (timestamped chunks)
     player.py            playback, asap / fixed-lag scheduling, resampling
   pipeline\
-    orchestrator.py      segmenting, GPU worker (text stage + voice stage), warm-up, stats
+    engine.py            the models, loaded once (lazily) and shared by live + files; warm-up
+    orchestrator.py      live: segmenting, GPU worker (text stage + voice stage), stats
     vad.py  diarize.py  speaker_id.py  stt.py  mt.py  voices.py
     metrics.py           per-line lag breakdown, rolling stats, GPU/CPU stats
+  files\
+    media.py             PyAV: probe tracks, decode, write audio, add/replace tracks (no re-encode)
+    dubber.py            whole-file translation: transcribe, speakers, translate, voice, timing
+    languages.py         the 17 voice languages, names, ISO-639-2 track tags
   firstrun\
     checks.py            GPU / driver / disk / audio checks
     hf_token.py          verify + save the Hugging Face token
@@ -304,8 +350,10 @@ ominvox\
   ui\
     server.py            FastAPI + WebSocket server (pipeline lifecycle, devices, settings)
     onboarding.py        first-run screen backend (fr_* messages)
+    files_tab.py         Files tab backend (file_* messages), one job at a time
+    dialogs.py           native open-file / choose-folder dialogs
     window.py            native window (pywebview / Edge WebView2)
-    web\                 index.html, app.css, app.js, setup.js (no build step)
+    web\                 index.html, app.css, app.js, setup.js, files.js (no build step)
 installer\
   launcher.py            Ominvox.exe (stdlib only)
   installer.py           OminvoxSetup.exe (tkinter; embeds the app as payload.zip)
@@ -340,13 +388,18 @@ scripts\build_exe.bat launcher   REM only Ominvox.exe
 - **Latency:** capture chunks carry monotonic timestamps; `lag = play_t - seg_start`, and the eight parts in `metrics.STAGES` sum to it exactly. In `fixed` mode the player schedules each clip at `seg_start + fixed_lag`.
 - Device lists are **WASAPI only**: one entry per device, full names. WASAPI shared mode needs the device's native rate and channels, so the player resamples the 24 kHz TTS audio.
 - Models are warmed up once after loading, so the first line isn't slower than the rest. A second launch reuses a running instance (`/api/health`), so the models are never loaded twice.
+- **File translation** uses PyAV (FFmpeg's libraries, bundled in the `av` wheel that faster-whisper already needs), so there's nothing extra to install. Video and subtitle packets are copied as they are; only the new audio is encoded (AAC, or Opus for WebM; other containers become MKV). Each language's audio is encoded to a temporary file as soon as it's ready, so memory stays flat even for a 2-hour film with many languages.
+- In files, **Whisper uses word timestamps**: lines start and end where the words do, and a segment is split where a sentence ends before a pause (usually a speaker change). After speakers are found, back-to-back lines from the same speaker are joined again, because XTTS sounds better on whole sentences and goes wrong on very short ones. Speakers are grouped with the same embeddings as live mode: long lines seed the groups and short lines only join one.
+- **NLLB translates sentence by sentence.** Given several sentences at once, the 600M model often drops one. On short input it also adds subtitle-style dashes and repeats ("- Gracias. - Gracias."), which `mt.clean_output` removes. Files use beam search (4 beams). **To English, files use Whisper's own translation**, which is better and needs no download.
+- XTTS sometimes babbles on after short text, so an implausibly long result is re-spoken once and, if it's still too long, cut with a fade.
+- **Security:** the WebSocket and the upload endpoint refuse other websites' pages (Origin check), because any page in the browser can reach `127.0.0.1`. "Show in folder" only opens files the Files tab itself produced.
 - See `docs\PROJECT_PLAN.md` for the original roadmap.
 
 ### Tests
 
 ```bat
 .venv312\Scripts\python.exe tests\run_all.py          REM fast + GPU suites (no sound)
-.venv312\Scripts\python.exe tests\run_all.py fast     REM no GPU models (~30 s)
+.venv312\Scripts\python.exe tests\run_all.py fast     REM no GPU models (~1 min)
 .venv312\Scripts\python.exe tests\run_all.py all      REM also the suites that PLAY SOUND
 ```
 
