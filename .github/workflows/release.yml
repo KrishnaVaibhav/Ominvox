@@ -31,16 +31,7 @@ jobs:
 
       - name: Build Ominvox.exe and OminvoxSetup.exe
         shell: pwsh
-        run: |
-          pip install -r requirements-build.txt
-          $build = ".cache/build"
-          $pyi = @("--noconfirm", "--onefile", "--windowed", "--workpath", $build, "--specpath", $build)
-          python installer/make_icon.py
-          python -m PyInstaller @pyi --name Ominvox --icon "$PWD/assets/ominvox.ico" --distpath . installer/launcher.py
-          python installer/build_payload.py
-          python -m PyInstaller @pyi --name OminvoxSetup --icon "$PWD/assets/ominvox.ico" --distpath dist `
-            --add-data "$PWD/$build/payload.zip;." --add-data "$PWD/assets/ominvox.ico;." installer/installer.py
-          Get-Item dist/OminvoxSetup.exe | Format-List Name, Length
+        run: ./scripts/build_release.ps1
 
       - name: Draft the release
         uses: softprops/action-gh-release@v2
