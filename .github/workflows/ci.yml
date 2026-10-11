@@ -18,8 +18,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Ruff
@@ -45,8 +45,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -63,8 +63,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -78,7 +78,7 @@ jobs:
           # The installer must carry the app payload and the icon.
           python -c "import sys; from PyInstaller.archive.readers import CArchiveReader as R; t = R('dist/OminvoxSetup.exe').toc; missing = [n for n in ('payload.zip', 'ominvox.ico') if n not in t]; print('contents ok' if not missing else missing); sys.exit(1 if missing else 0)"
       - name: Upload the installer (for testing this PR)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: OminvoxSetup-${{ github.sha }}
           path: dist/OminvoxSetup.exe
