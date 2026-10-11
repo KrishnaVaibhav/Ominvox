@@ -5,7 +5,7 @@ numpy>=1.26
 scipy>=1.11
 pyyaml>=6.0
 soundfile>=0.12
-av>=14
+av>=19.0.1
 faster-whisper>=1.0.3
 huggingface_hub>=0.24
 PyAudioWPatch>=0.2.12.6 ; sys_platform == "win32"
