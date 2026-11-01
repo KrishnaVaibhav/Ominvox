@@ -4,7 +4,7 @@
 # core
 numpy>=1.26
 pyyaml>=6.0
-soundfile>=0.12
+soundfile>=0.14.0
 
 # audio capture (Windows WASAPI loopback)
 PyAudioWPatch>=0.2.12.6 ; sys_platform == "win32"
